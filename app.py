@@ -180,36 +180,49 @@ def _groq_report(summary: dict, mode: str = "descriptivo") -> str:
 
     if mode == "futuro":
         prompt = f"""
-You are an expert in school climate, bullying prevention, and risk forecasting.
+Eres un experto en clima escolar, prevención del bullying y análisis de riesgo futuro.
 
-Write a clear, non-technical FUTURE-ORIENTED report for school administrators based ONLY
-on the aggregated data below (current state + simple forecast indicators).
+Redacta un informe claro, en lenguaje NO técnico, dirigido a directivos
+y equipos escolares, basándote ÚNICAMENTE en los datos agregados a continuación.
 
-Include:
-- Current risk level (brief)
-- Expected direction next term (increase / stable / decrease) and why
-- Which groups may be more vulnerable (if patterns exist)
-- 3 practical preventive actions for the next 30-60 days
+Incluye:
+- Breve resumen del estado actual
+- Proyección razonada de la situación futura (mejora, estabilidad o empeoramiento)
+- Posibles grupos más vulnerables si se observan patrones
+- 3 acciones preventivas concretas para los próximos 30–60 días
 
-AGGREGATED DATA:
+IMPORTANTE:
+- Escribe el informe completamente en ESPAÑOL
+- No utilices lenguaje técnico ni estadístico complejo
+- No inventes información que no esté en los datos
+
+DATOS AGREGADOS:
 {summary}
 """
+
     else:
         prompt = f"""
-You are an expert in school climate and bullying prevention.
+prompt = f"""
+Eres un experto en clima escolar y prevención del bullying.
 
-Write a clear, non-technical report for school administrators based ONLY
-on the aggregated data below.
+Redacta un informe claro, en lenguaje NO técnico, dirigido a directivos
+y equipos escolares, basándote ÚNICAMENTE en los datos agregados a continuación.
 
-Include:
-- Overall level of victimization risk
-- Key patterns you can infer
-- Who seems to be aware (friends, adults, parents)
-- 3 concrete, practical recommendations
+Incluye:
+- Nivel general de riesgo de victimización
+- Principales patrones de comportamiento que se puedan inferir
+- Quiénes parecen estar informados de lo que ocurre (amigos, adultos, padres)
+- 3 recomendaciones concretas y prácticas para la escuela
 
-AGGREGATED DATA:
+IMPORTANTE:
+- Escribe el informe completamente en ESPAÑOL
+- Usa un tono profesional, empático y orientado a la acción
+- No inventes información que no esté en los datos
+
+DATOS AGREGADOS:
 {summary}
 """
+
 
     r = requests.post(
         "https://api.groq.com/openai/v1/chat/completions",
@@ -414,3 +427,4 @@ elif st.session_state.page == "futuro":
 else:
     st.session_state.page = "menu"
     st.rerun()
+
