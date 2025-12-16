@@ -82,19 +82,23 @@ def build_long_df(responses, answers, aso, qopts, questions, schools):
     df = (
         answers
         .merge(responses, left_on="survey_response_id", right_on="id", suffixes=("_ans", "_resp"))
-        .merge(questions, left_on="question_id", right_on="id")
-        .merge(aso, left_on="id_ans", right_on="question_answer_id")
-        .merge(qopts, left_on="option_id", right_on="id", suffixes=("", "_opt"))
+        .merge(questions, left_on="question_id", right_on="id", suffixes=("", "_q"))
+        .merge(aso, left_on="id_ans", right_on="question_answer_id", how="inner")
+        .merge(qopts, left_on="option_id", right_on="id", how="inner", suffixes=("", "_opt"))
     )
 
-    if not schools.empty:
+    # FIX: avoid MergeError by renaming schools.id to school_pk
+    if not schools.empty and {"id", "name"}.issubset(schools.columns):
+        schools_small = schools[["id", "name"]].rename(
+            columns={"id": "school_pk", "name": "school_name"}
+        )
         df = df.merge(
-            schools[["id", "name"]],
+            schools_small,
             left_on="school_id",
-            right_on="id",
+            right_on="school_pk",
             how="left",
         )
-        df.rename(columns={"name": "school_name"}, inplace=True)
+        df["school_name"] = df["school_name"].fillna(df["school_id"].astype(str))
     else:
         df["school_name"] = df["school_id"].astype(str)
 
@@ -108,19 +112,19 @@ def compute_student_metrics(df: pd.DataFrame) -> pd.DataFrame:
     d = df.copy()
 
     d["victimization"] = d["question_text"].str.contains(
-        r"has sido agredido|te han molestado|te han ignorado", case=False
+        r"has sido agredido|te han molestado|te han ignorado", case=False, na=False
     ) * d["score"]
 
     d["cyberbullying"] = d["question_text"].str.contains(
-        r"internet|mensajería|mensajes|videos|fotos", case=False
+        r"internet|mensajería|mensajes|videos|fotos", case=False, na=False
     ) * d["score"]
 
-    d["trust_friends"] = d["question_text"].str.contains("amigos", case=False) * d["score"]
-    d["trust_adults"] = d["question_text"].str.contains("adultos", case=False) * d["score"]
-    d["trust_parents"] = d["question_text"].str.contains("padres", case=False) * d["score"]
+    d["trust_friends"] = d["question_text"].str.contains("amigos", case=False, na=False) * d["score"]
+    d["trust_adults"] = d["question_text"].str.contains("adultos", case=False, na=False) * d["score"]
+    d["trust_parents"] = d["question_text"].str.contains("padres", case=False, na=False) * d["score"]
 
     d["safety"] = d["question_text"].str.contains(
-        r"me siento seguro|me gusta venir|buen lugar", case=False
+        r"me siento seguro|me gusta venir|buen lugar", case=False, na=False
     ) * d["score"]
 
     student = d.groupby("survey_response_id").agg(
@@ -133,7 +137,7 @@ def compute_student_metrics(df: pd.DataFrame) -> pd.DataFrame:
         safety=("safety", "sum"),
     ).reset_index()
 
-    p80 = student["victimization"].quantile(0.80)
+    p80 = float(student["victimization"].quantile(0.80)) if len(student) else 0.0
     student["risk_level"] = np.where(student["victimization"] >= p80, "ALTO", "MEDIO/BAJO")
 
     student["knows_friends"] = student["trust_friends"] > 0
@@ -157,7 +161,7 @@ def build_school_summary(view: pd.DataFrame) -> dict:
     }
 
 def generate_llm_report(summary: dict) -> str:
-    provider = st.secrets.get("LLM_PROVIDER", "groq")
+    provider = st.secrets.get("LLM_PROVIDER", "groq").strip().lower()
     if provider == "groq":
         return _groq_report(summary)
     elif provider == "hf":
@@ -189,14 +193,11 @@ AGGREGATED DATA:
 
     r = requests.post(
         "https://api.groq.com/openai/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         json={
             "model": model,
             "messages": [
-                {"role": "system", "content": "You generate school safety reports."},
+                {"role": "system", "content": "You generate concise school safety reports."},
                 {"role": "user", "content": prompt},
             ],
             "temperature": 0.3,
@@ -213,6 +214,7 @@ st.title("Dashboard Bullying — Phase 1 (Current state)")
 
 responses, answers, aso, qopts, questions, schools = load_tables()
 
+# Debug counts (keep for now)
 st.write("Counts", {
     "survey_responses": len(responses),
     "question_answers": len(answers),
@@ -229,16 +231,16 @@ if df_long.empty:
 
 student = compute_student_metrics(df_long)
 
-school_list = sorted(student["school_name"].unique())
+school_list = sorted(student["school_name"].dropna().unique().tolist())
 school = st.sidebar.selectbox("School", ["(All)"] + school_list)
 
 view = student if school == "(All)" else student[student["school_name"] == school]
 
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("Students", len(view))
-c2.metric("High risk", (view["risk_level"] == "ALTO").sum())
-c3.metric("Avg victimization", round(view["victimization"].mean(), 2))
-c4.metric("Avg cyberbullying", round(view["cyberbullying"].mean(), 2))
+c1.metric("Students", int(len(view)))
+c2.metric("High risk", int((view["risk_level"] == "ALTO").sum()))
+c3.metric("Avg victimization", float(round(view["victimization"].mean(), 2)))
+c4.metric("Avg cyberbullying", float(round(view["cyberbullying"].mean(), 2)))
 
 st.divider()
 
@@ -260,3 +262,4 @@ if st.button("Generate AI Report"):
         summary = build_school_summary(view)
         report = generate_llm_report(summary)
         st.markdown(report)
+
