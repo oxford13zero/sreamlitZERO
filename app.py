@@ -1,4 +1,7 @@
-# app.py — Bullying Dashboard (Phase 1: Current State + LLM Report)
+# app.py — Bullying Dashboard
+# Menu -> (1) Patrones descriptivos + LLM
+#      -> (2) Comportamiento futuro y patrones + LLM
+# Back to menu
 
 import os
 import numpy as np
@@ -11,6 +14,16 @@ from supabase import create_client
 # Page config
 # -------------------------------------------------
 st.set_page_config(page_title="Bullying Dashboard", layout="wide")
+
+# -------------------------------------------------
+# Simple router (menu / descriptivo / futuro)
+# -------------------------------------------------
+if "page" not in st.session_state:
+    st.session_state.page = "menu"  # menu | descriptivo | futuro
+
+def go(page_name: str):
+    st.session_state.page = page_name
+    st.rerun()
 
 # -------------------------------------------------
 # Supabase config
@@ -149,33 +162,40 @@ def compute_student_metrics(df: pd.DataFrame) -> pd.DataFrame:
 # -------------------------------------------------
 # LLM (Groq now, HF later)
 # -------------------------------------------------
-def build_school_summary(view: pd.DataFrame) -> dict:
-    return {
-        "students": int(len(view)),
-        "high_risk_pct": float((view["risk_level"] == "ALTO").mean()),
-        "avg_victimization": float(view["victimization"].mean()),
-        "avg_cyberbullying": float(view["cyberbullying"].mean()),
-        "knows_friends_pct": float(view["knows_friends"].mean()),
-        "knows_adults_pct": float(view["knows_adults"].mean()),
-        "knows_parents_pct": float(view["knows_parents"].mean()),
-    }
-
-def generate_llm_report(summary: dict) -> str:
+def generate_llm_report(summary: dict, mode: str) -> str:
     provider = st.secrets.get("LLM_PROVIDER", "groq").strip().lower()
     if provider == "groq":
-        return _groq_report(summary)
+        return _groq_report(summary, mode=mode)
     elif provider == "hf":
         return "Hugging Face not enabled yet."
     return "LLM provider not configured."
 
-def _groq_report(summary: dict) -> str:
+def _groq_report(summary: dict, mode: str = "descriptivo") -> str:
     api_key = st.secrets.get("GROQ_API_KEY")
-    model = st.secrets.get("LLM_MODEL", "llama3-8b-8192")
+    # usa el modelo que ya te funcionó
+    model = st.secrets.get("LLM_MODEL", "llama-3.1-8b-instant")
 
     if not api_key:
         return "Groq API key missing."
 
-    prompt = f"""
+    if mode == "futuro":
+        prompt = f"""
+You are an expert in school climate, bullying prevention, and risk forecasting.
+
+Write a clear, non-technical FUTURE-ORIENTED report for school administrators based ONLY
+on the aggregated data below (current state + simple forecast indicators).
+
+Include:
+- Current risk level (brief)
+- Expected direction next term (increase / stable / decrease) and why
+- Which groups may be more vulnerable (if patterns exist)
+- 3 practical preventive actions for the next 30-60 days
+
+AGGREGATED DATA:
+{summary}
+"""
+    else:
+        prompt = f"""
 You are an expert in school climate and bullying prevention.
 
 Write a clear, non-technical report for school administrators based ONLY
@@ -205,64 +225,192 @@ AGGREGATED DATA:
         timeout=30,
     )
 
-    # Show the real Groq error in logs (no key leakage)
     if r.status_code != 200:
         raise RuntimeError(f"Groq HTTP {r.status_code}: {r.text}")
 
     return r.json()["choices"][0]["message"]["content"]
 
 # -------------------------------------------------
-# UI
+# Shared helpers for UI
 # -------------------------------------------------
-st.title("Dashboard Bullying — Phase 1 (Current state)")
+def render_school_selector(student_df: pd.DataFrame) -> pd.DataFrame:
+    school_list = sorted(student_df["school_name"].dropna().unique().tolist())
+    school = st.sidebar.selectbox("School", ["(All)"] + school_list)
+    return student_df if school == "(All)" else student_df[student_df["school_name"] == school]
 
+def render_top_metrics(view: pd.DataFrame):
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Students", int(len(view)))
+    c2.metric("High risk", int((view["risk_level"] == "ALTO").sum()))
+    c3.metric("Avg victimization", float(round(view["victimization"].mean(), 2)))
+    c4.metric("Avg cyberbullying", float(round(view["cyberbullying"].mean(), 2)))
+
+def summary_descriptivo(view: pd.DataFrame) -> dict:
+    return {
+        "mode": "descriptivo",
+        "students": int(len(view)),
+        "high_risk_pct": float((view["risk_level"] == "ALTO").mean()),
+        "avg_victimization": float(view["victimization"].mean()),
+        "avg_cyberbullying": float(view["cyberbullying"].mean()),
+        "knows_friends_pct": float(view["knows_friends"].mean()),
+        "knows_adults_pct": float(view["knows_adults"].mean()),
+        "knows_parents_pct": float(view["knows_parents"].mean()),
+    }
+
+def summary_futuro(view: pd.DataFrame, forecast: pd.DataFrame) -> dict:
+    # forecast: columns risk_level_pred (ALTO/MEDIO/BAJO or ALTO/MEDIO/BAJO simplified)
+    return {
+        "mode": "futuro",
+        "students": int(len(view)),
+        "current_high_risk_pct": float((view["risk_level"] == "ALTO").mean()),
+        "current_avg_victimization": float(view["victimization"].mean()),
+        "current_avg_safety": float(view["safety"].mean()),
+        "forecast_high_risk_pct": float((forecast["risk_level_pred"] == "ALTO").mean()),
+        "forecast_note": "Heuristic forecast based on current victimization & safety signals (baseline).",
+    }
+
+# -------------------------------------------------
+# Simple future forecast (baseline heuristic)
+# -------------------------------------------------
+def make_future_forecast(view: pd.DataFrame) -> pd.DataFrame:
+    """
+    Baseline forecast (no ML yet): projects next-term victimization by adding
+    small noise and a safety-based drift.
+    """
+    if view.empty:
+        return pd.DataFrame(columns=["survey_response_id", "victimization_pred", "risk_level_pred"])
+
+    v = view.copy()
+
+    # drift: if safety is low, increase expected victimization slightly
+    safety_mean = float(v["safety"].mean()) if len(v) else 0.0
+    drift = 0.10 if safety_mean < 1.0 else (0.03 if safety_mean < 2.0 else 0.0)
+
+    noise = np.random.normal(loc=0.0, scale=0.5, size=len(v))
+    v["victimization_pred"] = np.clip(v["victimization"].values * (1.0 + drift) + noise, 0, None)
+
+    # keep same threshold logic using current P80 as baseline
+    p80 = float(view["victimization"].quantile(0.80)) if len(view) else 0.0
+    v["risk_level_pred"] = np.where(v["victimization_pred"] >= p80, "ALTO", "MEDIO/BAJO")
+
+    return v[["survey_response_id", "victimization_pred", "risk_level_pred"]]
+
+# -------------------------------------------------
+# Load data ONCE (shared across pages)
+# -------------------------------------------------
 responses, answers, aso, qopts, questions, schools = load_tables()
-
-# Debug counts (keep for now)
-st.write("Counts", {
-    "survey_responses": len(responses),
-    "question_answers": len(answers),
-    "answer_selected_options": len(aso),
-    "question_options": len(qopts),
-    "questions": len(questions),
-    "schools": len(schools),
-})
 
 df_long = build_long_df(responses, answers, aso, qopts, questions, schools)
 if df_long.empty:
+    st.title("Dashboard Bullying")
     st.warning("Not enough data yet.")
+    with st.expander("Debug counts"):
+        st.write({
+            "survey_responses": len(responses),
+            "question_answers": len(answers),
+            "answer_selected_options": len(aso),
+            "question_options": len(qopts),
+            "questions": len(questions),
+            "schools": len(schools),
+        })
     st.stop()
 
 student = compute_student_metrics(df_long)
 
-school_list = sorted(student["school_name"].dropna().unique().tolist())
-school = st.sidebar.selectbox("School", ["(All)"] + school_list)
+# -------------------------------------------------
+# Pages
+# -------------------------------------------------
+def page_menu():
+    st.title("TECH4ZERO — Dashboard")
+    st.write("Elige qué quieres ver:")
 
-view = student if school == "(All)" else student[student["school_name"] == school]
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("Patrones descriptivos", use_container_width=True, type="primary"):
+            go("descriptivo")
+    with c2:
+        if st.button("Comportamiento futuro y patrones", use_container_width=True):
+            go("futuro")
 
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Students", int(len(view)))
-c2.metric("High risk", int((view["risk_level"] == "ALTO").sum()))
-c3.metric("Avg victimization", float(round(view["victimization"].mean(), 2)))
-c4.metric("Avg cyberbullying", float(round(view["cyberbullying"].mean(), 2)))
+    with st.expander("Debug counts"):
+        st.write({
+            "survey_responses": len(responses),
+            "question_answers": len(answers),
+            "answer_selected_options": len(aso),
+            "question_options": len(qopts),
+            "questions": len(questions),
+            "schools": len(schools),
+        })
 
-st.divider()
+def page_descriptivo():
+    st.title("Patrones descriptivos")
 
-st.subheader("Risk distribution")
-st.bar_chart(view["risk_level"].value_counts())
+    view = render_school_selector(student)
+    render_top_metrics(view)
 
-st.subheader("Who knows (intention to tell)")
-st.bar_chart(pd.DataFrame({
-    "Friends": [view["knows_friends"].mean()],
-    "Adults": [view["knows_adults"].mean()],
-    "Parents": [view["knows_parents"].mean()],
-}).T)
+    st.divider()
 
-st.divider()
-st.subheader("AI-generated School Report")
+    st.subheader("Risk distribution")
+    st.bar_chart(view["risk_level"].value_counts())
 
-if st.button("Generate AI Report"):
-    with st.spinner("Generating report…"):
-        summary = build_school_summary(view)
-        report = generate_llm_report(summary)
-        st.markdown(report)
+    st.subheader("Who knows (intention to tell)")
+    st.bar_chart(pd.DataFrame({
+        "Friends": [view["knows_friends"].mean()],
+        "Adults": [view["knows_adults"].mean()],
+        "Parents": [view["knows_parents"].mean()],
+    }).T)
+
+    st.divider()
+    st.subheader("Explicación en lenguaje humano (IA)")
+
+    if st.button("Generar explicación IA", type="primary"):
+        with st.spinner("Generando reporte…"):
+            summary = summary_descriptivo(view)
+            report = generate_llm_report(summary, mode="descriptivo")
+            st.markdown(report)
+
+    st.divider()
+    if st.button("Volver menú principal"):
+        go("menu")
+
+def page_futuro():
+    st.title("Comportamiento futuro y patrones")
+
+    view = render_school_selector(student)
+    render_top_metrics(view)
+
+    st.divider()
+
+    forecast = make_future_forecast(view)
+
+    st.subheader("Predicción (baseline): distribución de riesgo próximo período")
+    st.bar_chart(forecast["risk_level_pred"].value_counts())
+
+    st.subheader("Predicción (baseline): victimización proyectada")
+    st.line_chart(forecast["victimization_pred"].reset_index(drop=True))
+
+    st.divider()
+    st.subheader("Explicación futura en lenguaje humano (IA)")
+
+    if st.button("Generar explicación IA (futuro)", type="primary"):
+        with st.spinner("Generando reporte…"):
+            summary = summary_futuro(view, forecast)
+            report = generate_llm_report(summary, mode="futuro")
+            st.markdown(report)
+
+    st.divider()
+    if st.button("Volver menú principal"):
+        go("menu")
+
+# -------------------------------------------------
+# Router
+# -------------------------------------------------
+if st.session_state.page == "menu":
+    page_menu()
+elif st.session_state.page == "descriptivo":
+    page_descriptivo()
+elif st.session_state.page == "futuro":
+    page_futuro()
+else:
+    st.session_state.page = "menu"
+    st.rerun()
