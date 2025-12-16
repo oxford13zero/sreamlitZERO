@@ -129,4 +129,5 @@ def compute_student_metrics(df_long: pd.DataFrame) -> pd.DataFrame:
 # -----------------------------
 # UI
 # -----------------------------
-st.title("Dashboard Bullying — Fase 1 (Estado a
+st.title("Dashboard Bullying — Fase 1 (Estado actual)")
+
