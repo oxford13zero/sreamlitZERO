@@ -1,26 +1,32 @@
-# app.py — Dashboard Streamlit (Fase 1: Estado actual)
-# Ejecuta local: streamlit run app.py
+# app.py — Bullying Dashboard (Phase 1: Current State + LLM Report)
 
 import os
 import numpy as np
 import pandas as pd
 import streamlit as st
+import requests
 from supabase import create_client
 
-# -----------------------------
-# Configuración
-# -----------------------------
+# -------------------------------------------------
+# Page config
+# -------------------------------------------------
 st.set_page_config(page_title="Bullying Dashboard", layout="wide")
 
+# -------------------------------------------------
+# Supabase config
+# -------------------------------------------------
 SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.getenv("SUPABASE_URL", ""))
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", os.getenv("SUPABASE_KEY", ""))
 
 if not SUPABASE_URL or not SUPABASE_KEY:
-    st.error("Faltan credenciales SUPABASE_URL / SUPABASE_KEY.")
+    st.error("Missing SUPABASE_URL / SUPABASE_KEY")
     st.stop()
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# -------------------------------------------------
+# Scoring scale
+# -------------------------------------------------
 SCALE = {
     "Nunca": 0,
     "Sólo una vez": 1,
@@ -32,16 +38,16 @@ SCALE = {
     "No": 0,
 }
 
-# -----------------------------
-# Data loading (con paginación)
-# -----------------------------
+# -------------------------------------------------
+# Supabase pagination helpers
+# -------------------------------------------------
 @st.cache_data(ttl=300)
-def _fetch_all(table_name: str, batch: int = 1000) -> pd.DataFrame:
-    all_rows = []
+def _fetch_all(table: str, batch: int = 1000) -> pd.DataFrame:
+    rows = []
     start = 0
     while True:
         data = (
-            supabase.table(table_name)
+            supabase.table(table)
             .select("*")
             .range(start, start + batch - 1)
             .execute()
@@ -49,64 +55,44 @@ def _fetch_all(table_name: str, batch: int = 1000) -> pd.DataFrame:
         )
         if not data:
             break
-        all_rows.extend(data)
+        rows.extend(data)
         if len(data) < batch:
             break
         start += batch
-    return pd.DataFrame(all_rows)
+    return pd.DataFrame(rows)
 
 @st.cache_data(ttl=300)
 def load_tables():
-    responses = _fetch_all("survey_responses")
-    answers = _fetch_all("question_answers")
-    aso = _fetch_all("answer_selected_options")
-    qopts = _fetch_all("question_options")
-    questions = _fetch_all("questions")
-    schools = _fetch_all("schools")
-    return responses, answers, aso, qopts, questions, schools
+    return (
+        _fetch_all("survey_responses"),
+        _fetch_all("question_answers"),
+        _fetch_all("answer_selected_options"),
+        _fetch_all("question_options"),
+        _fetch_all("questions"),
+        _fetch_all("schools"),
+    )
 
-# -----------------------------
-# Transformaciones
-# -----------------------------
+# -------------------------------------------------
+# Data preparation
+# -------------------------------------------------
 def build_long_df(responses, answers, aso, qopts, questions, schools):
-    # Si falta algo, no seguimos
     if responses.empty or answers.empty or aso.empty or qopts.empty or questions.empty:
         return pd.DataFrame()
 
-    # Normalizar columnas mínimas esperadas
-    for df, cols in [
-        (responses, ["id", "school_id"]),
-        (answers, ["id", "survey_response_id", "question_id"]),
-        (aso, ["question_answer_id", "option_id"]),
-        (qopts, ["id", "option_text"]),
-        (questions, ["id", "question_text"]),
-    ]:
-        for c in cols:
-            if c not in df.columns:
-                raise KeyError(f"Falta columna '{c}' en tabla correspondiente.")
-
-    # Merge seguro (paso a paso)
-    df = answers.merge(
-        responses, left_on="survey_response_id", right_on="id", suffixes=("_ans", "_resp")
-    )
-    df = df.merge(
-        questions, left_on="question_id", right_on="id", suffixes=("", "_q")
-    )
-    df = df.merge(
-        aso, left_on="id_ans", right_on="question_answer_id", how="inner"
-    )
-    df = df.merge(
-        qopts, left_on="option_id", right_on="id", how="inner", suffixes=("", "_opt")
+    df = (
+        answers
+        .merge(responses, left_on="survey_response_id", right_on="id", suffixes=("_ans", "_resp"))
+        .merge(questions, left_on="question_id", right_on="id")
+        .merge(aso, left_on="id_ans", right_on="question_answer_id")
+        .merge(qopts, left_on="option_id", right_on="id", suffixes=("", "_opt"))
     )
 
-    # School name
-    if not schools.empty and "id" in schools.columns and "name" in schools.columns:
+    if not schools.empty:
         df = df.merge(
             schools[["id", "name"]],
             left_on="school_id",
             right_on="id",
             how="left",
-            suffixes=("", "_school"),
         )
         df.rename(columns={"name": "school_name"}, inplace=True)
     else:
@@ -118,34 +104,26 @@ def build_long_df(responses, answers, aso, qopts, questions, schools):
 
     return df
 
-def compute_student_metrics(df_long: pd.DataFrame) -> pd.DataFrame:
-    df = df_long.copy()
+def compute_student_metrics(df: pd.DataFrame) -> pd.DataFrame:
+    d = df.copy()
 
-    victim_kw = r"has sido agredido|te han molestado|te han ignorado"
-    cyber_kw = r"internet|mensajería|mensajes de texto|videos|fotos"
-    safety_kw = r"me siento seguro|me gusta venir|buen lugar"
+    d["victimization"] = d["question_text"].str.contains(
+        r"has sido agredido|te han molestado|te han ignorado", case=False
+    ) * d["score"]
 
-    df["victimization"] = df["question_text"].str.contains(victim_kw, case=False, na=False) * df["score"]
-    df["cyberbullying"] = df["question_text"].str.contains(cyber_kw, case=False, na=False) * df["score"]
-    df["trust_friends"] = df["question_text"].str.contains("amigos", case=False, na=False) * df["score"]
-    df["trust_adults"]  = df["question_text"].str.contains("adultos", case=False, na=False) * df["score"]
-    df["trust_parents"] = df["question_text"].str.contains("padres", case=False, na=False) * df["score"]
-    df["safety"] = df["question_text"].str.contains(safety_kw, case=False, na=False) * df["score"]
+    d["cyberbullying"] = d["question_text"].str.contains(
+        r"internet|mensajería|mensajes|videos|fotos", case=False
+    ) * d["score"]
 
-    # Demografía (si existe como opciones)
-    def pick_demo(contains: str) -> pd.Series:
-        sub = df[df["question_text"].str.contains(contains, case=False, na=False)]
-        if sub.empty:
-            return pd.Series(dtype=str)
-        return sub.groupby("survey_response_id")["option_text"].agg(
-            lambda x: x.dropna().iloc[0] if len(x.dropna()) else ""
-        )
+    d["trust_friends"] = d["question_text"].str.contains("amigos", case=False) * d["score"]
+    d["trust_adults"] = d["question_text"].str.contains("adultos", case=False) * d["score"]
+    d["trust_parents"] = d["question_text"].str.contains("padres", case=False) * d["score"]
 
-    gender = pick_demo("género")
-    grade  = pick_demo("grado")
-    age    = pick_demo("edad")
+    d["safety"] = d["question_text"].str.contains(
+        r"me siento seguro|me gusta venir|buen lugar", case=False
+    ) * d["score"]
 
-    student = df.groupby("survey_response_id").agg(
+    student = d.groupby("survey_response_id").agg(
         school_name=("school_name", "first"),
         victimization=("victimization", "sum"),
         cyberbullying=("cyberbullying", "sum"),
@@ -155,131 +133,130 @@ def compute_student_metrics(df_long: pd.DataFrame) -> pd.DataFrame:
         safety=("safety", "sum"),
     ).reset_index()
 
-    student["gender"] = student["survey_response_id"].map(gender).fillna("Sin dato")
-    student["grade"]  = student["survey_response_id"].map(grade).fillna("Sin dato")
-    student["age"]    = student["survey_response_id"].map(age).fillna("")
-
-    # Riesgo alto por percentil
-    p80 = float(student["victimization"].quantile(0.80)) if len(student) else 0.0
+    p80 = student["victimization"].quantile(0.80)
     student["risk_level"] = np.where(student["victimization"] >= p80, "ALTO", "MEDIO/BAJO")
 
-    # “Quién sabe” (intención de contar)
     student["knows_friends"] = student["trust_friends"] > 0
-    student["knows_adults"]  = student["trust_adults"] > 0
+    student["knows_adults"] = student["trust_adults"] > 0
     student["knows_parents"] = student["trust_parents"] > 0
 
     return student
 
-# -----------------------------
-# UI
-# -----------------------------
-st.title("Dashboard Bullying — Fase 1 (Estado actual)")
+# -------------------------------------------------
+# LLM (Groq now, Hugging Face later)
+# -------------------------------------------------
+def build_school_summary(view: pd.DataFrame) -> dict:
+    return {
+        "students": int(len(view)),
+        "high_risk_pct": float((view["risk_level"] == "ALTO").mean()),
+        "avg_victimization": float(view["victimization"].mean()),
+        "avg_cyberbullying": float(view["cyberbullying"].mean()),
+        "knows_friends_pct": float(view["knows_friends"].mean()),
+        "knows_adults_pct": float(view["knows_adults"].mean()),
+        "knows_parents_pct": float(view["knows_parents"].mean()),
+    }
 
-with st.sidebar:
-    st.header("Opciones")
-    refresh = st.button("Recargar datos")
-    risk_pct = st.slider("Umbral riesgo alto (percentil)", 50, 95, 80, 5)
+def generate_llm_report(summary: dict) -> str:
+    provider = st.secrets.get("LLM_PROVIDER", "groq")
+    if provider == "groq":
+        return _groq_report(summary)
+    elif provider == "hf":
+        return "Hugging Face not enabled yet."
+    return "LLM provider not configured."
 
-if refresh:
-    st.cache_data.clear()
+def _groq_report(summary: dict) -> str:
+    api_key = st.secrets.get("GROQ_API_KEY")
+    model = st.secrets.get("LLM_MODEL", "llama-3.1-70b-versatile")
 
-try:
-    responses, answers, aso, qopts, questions, schools = load_tables()
+    if not api_key:
+        return "Groq API key missing."
 
-    # Debug visible (para evitar “pantalla en blanco”)
-    st.write("Counts", {
-        "survey_responses": len(responses),
-        "question_answers": len(answers),
-        "answer_selected_options": len(aso),
-        "question_options": len(qopts),
-        "questions": len(questions),
-        "schools": len(schools),
-    })
+    prompt = f"""
+You are an expert in school climate and bullying prevention.
 
-    df_long = build_long_df(responses, answers, aso, qopts, questions, schools)
+Write a clear, non-technical report for school administrators based ONLY
+on the aggregated data below.
 
-    if df_long.empty:
-        st.warning("No hay datos suficientes en Supabase para construir el dashboard todavía.")
-        st.stop()
+Include:
+- Overall level of victimization risk
+- Key patterns you can infer
+- Who seems to be aware (friends, adults, parents)
+- 3 concrete, practical recommendations
 
-    student = compute_student_metrics(df_long)
+AGGREGATED DATA:
+{summary}
+"""
 
-    # Recalcular riesgo con percentil elegido
-    thr = float(student["victimization"].quantile(risk_pct / 100.0)) if len(student) else 0.0
-    student["risk_level"] = np.where(student["victimization"] >= thr, "ALTO", "MEDIO/BAJO")
-
-    # Filtro por escuela
-    school_list = sorted(student["school_name"].fillna("N/A").unique().tolist())
-    selected_school = st.sidebar.selectbox("Escuela", ["(Todas)"] + school_list)
-
-    view = student.copy()
-    if selected_school != "(Todas)":
-        view = view[view["school_name"] == selected_school]
-
-    # KPIs
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Estudiantes", f"{len(view):,}")
-    c2.metric("Riesgo ALTO", f"{(view['risk_level']=='ALTO').sum():,}")
-    c3.metric("Victimización promedio", f"{view['victimization'].mean():.2f}")
-    c4.metric("Ciberbullying promedio", f"{view['cyberbullying'].mean():.2f}")
-
-    st.divider()
-
-    left, right = st.columns(2)
-
-    with left:
-        st.subheader("Distribución de riesgo")
-        risk_counts = view["risk_level"].value_counts()
-        st.bar_chart(risk_counts)
-
-        st.subheader("Top 20 — mayor victimización")
-        st.dataframe(
-            view.sort_values("victimization", ascending=False).head(20),
-            use_container_width=True
-        )
-
-    with right:
-        st.subheader("Quién sabe lo que pasa (intención de contar)")
-        knows = pd.DataFrame({
-            "Amigos": [view["knows_friends"].mean()],
-            "Adultos colegio": [view["knows_adults"].mean()],
-            "Padres": [view["knows_parents"].mean()],
-        }).T
-        st.bar_chart(knows)
-
-        st.subheader("Riesgo ALTO por género / grado")
-        a, b = st.columns(2)
-
-        with a:
-            g = view.copy()
-            g["gender"] = g["gender"].replace("", "Sin dato")
-            g_tab = (g.assign(high=(g["risk_level"] == "ALTO").astype(int))
-                      .groupby("gender")["high"].mean()
-                      .sort_values(ascending=False)
-                      .reset_index()
-                      .rename(columns={"high": "proporcion_riesgo_alto"}))
-            st.dataframe(g_tab, use_container_width=True)
-
-        with b:
-            gr = view.copy()
-            gr["grade"] = gr["grade"].replace("", "Sin dato")
-            gr_tab = (gr.assign(high=(gr["risk_level"] == "ALTO").astype(int))
-                       .groupby("grade")["high"].mean()
-                       .sort_values(ascending=False)
-                       .reset_index()
-                       .rename(columns={"high": "proporcion_riesgo_alto"}))
-            st.dataframe(gr_tab, use_container_width=True)
-
-    st.divider()
-
-    st.subheader("Exportar")
-    st.download_button(
-        "Descargar CSV (estado actual)",
-        view.to_csv(index=False).encode("utf-8"),
-        file_name="bullying_estado_actual.csv",
-        mime="text/csv"
+    r = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": model,
+            "messages": [
+                {"role": "system", "content": "You generate school safety reports."},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.3,
+        },
+        timeout=30,
     )
+    r.raise_for_status()
+    return r.json()["choices"][0]["message"]["content"]
 
-except Exception as e:
-    st.error("Ocurrió un error ejecutando el dashboard.")
-    st.exception(e)
+# -------------------------------------------------
+# UI
+# -------------------------------------------------
+st.title("Dashboard Bullying — Phase 1 (Current state)")
+
+responses, answers, aso, qopts, questions, schools = load_tables()
+
+st.write("Counts", {
+    "survey_responses": len(responses),
+    "question_answers": len(answers),
+    "answer_selected_options": len(aso),
+    "question_options": len(qopts),
+    "questions": len(questions),
+    "schools": len(schools),
+})
+
+df_long = build_long_df(responses, answers, aso, qopts, questions, schools)
+if df_long.empty:
+    st.warning("Not enough data yet.")
+    st.stop()
+
+student = compute_student_metrics(df_long)
+
+school_list = sorted(student["school_name"].unique())
+school = st.sidebar.selectbox("School", ["(All)"] + school_list)
+
+view = student if school == "(All)" else student[student["school_name"] == school]
+
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Students", len(view))
+c2.metric("High risk", (view["risk_level"] == "ALTO").sum())
+c3.metric("Avg victimization", round(view["victimization"].mean(), 2))
+c4.metric("Avg cyberbullying", round(view["cyberbullying"].mean(), 2))
+
+st.divider()
+
+st.subheader("Risk distribution")
+st.bar_chart(view["risk_level"].value_counts())
+
+st.subheader("Who knows (intention to tell)")
+st.bar_chart(pd.DataFrame({
+    "Friends": [view["knows_friends"].mean()],
+    "Adults": [view["knows_adults"].mean()],
+    "Parents": [view["knows_parents"].mean()],
+}).T)
+
+st.divider()
+st.subheader("AI-generated School Report")
+
+if st.button("Generate AI Report"):
+    with st.spinner("Generating report…"):
+        summary = build_school_summary(view)
+        report = generate_llm_report(summary)
+        st.markdown(report)
