@@ -170,7 +170,7 @@ def generate_llm_report(summary: dict) -> str:
 
 def _groq_report(summary: dict) -> str:
     api_key = st.secrets.get("GROQ_API_KEY")
-    model = st.secrets.get("LLM_MODEL", "llama-3.1-70b-versatile")
+    model = st.secrets.get("LLM_MODEL", "llama3-8b-8192")
 
     if not api_key:
         return "Groq API key missing."
@@ -204,8 +204,11 @@ AGGREGATED DATA:
         },
         timeout=30,
     )
-    r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"]
+    if r.status_code != 200:
+    raise RuntimeError(f"Groq HTTP {r.status_code}: {r.text}")
+
+return r.json()["choices"][0]["message"]["content"]
+
 
 # -------------------------------------------------
 # UI
@@ -262,4 +265,5 @@ if st.button("Generate AI Report"):
         summary = build_school_summary(view)
         report = generate_llm_report(summary)
         st.markdown(report)
+
 
