@@ -170,7 +170,8 @@ def generate_llm_report(summary: dict) -> str:
 
 def _groq_report(summary: dict) -> str:
     api_key = st.secrets.get("GROQ_API_KEY")
-    model = st.secrets.get("LLM_MODEL", "llama3-8b-8192")
+    model = st.secrets.get("LLM_MODEL", "llama-3.1-8b-instant")
+
 
     if not api_key:
         return "Groq API key missing."
@@ -266,4 +267,5 @@ if st.button("Generate AI Report"):
         summary = build_school_summary(view)
         report = generate_llm_report(summary)
         st.markdown(report)
+
 
