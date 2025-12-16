@@ -87,7 +87,7 @@ def build_long_df(responses, answers, aso, qopts, questions, schools):
         .merge(qopts, left_on="option_id", right_on="id", how="inner", suffixes=("", "_opt"))
     )
 
-    # FIX: avoid MergeError by renaming schools.id to school_pk
+    # Avoid MergeError: rename schools.id to school_pk before merging
     if not schools.empty and {"id", "name"}.issubset(schools.columns):
         schools_small = schools[["id", "name"]].rename(
             columns={"id": "school_pk", "name": "school_name"}
@@ -147,7 +147,7 @@ def compute_student_metrics(df: pd.DataFrame) -> pd.DataFrame:
     return student
 
 # -------------------------------------------------
-# LLM (Groq now, Hugging Face later)
+# LLM (Groq now, HF later)
 # -------------------------------------------------
 def build_school_summary(view: pd.DataFrame) -> dict:
     return {
@@ -204,11 +204,12 @@ AGGREGATED DATA:
         },
         timeout=30,
     )
+
+    # Show the real Groq error in logs (no key leakage)
     if r.status_code != 200:
-    raise RuntimeError(f"Groq HTTP {r.status_code}: {r.text}")
+        raise RuntimeError(f"Groq HTTP {r.status_code}: {r.text}")
 
-return r.json()["choices"][0]["message"]["content"]
-
+    return r.json()["choices"][0]["message"]["content"]
 
 # -------------------------------------------------
 # UI
@@ -265,5 +266,4 @@ if st.button("Generate AI Report"):
         summary = build_school_summary(view)
         report = generate_llm_report(summary)
         st.markdown(report)
-
 
