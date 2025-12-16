@@ -202,22 +202,22 @@ DATOS AGREGADOS:
 
     else:
         prompt = f"""
-prompt = f"""
-Eres un experto en clima escolar y prevención del bullying.
 
-Redacta un informe claro, en lenguaje NO técnico, dirigido a directivos
-y equipos escolares, basándote ÚNICAMENTE en los datos agregados a continuación.
+        Eres un experto en clima escolar y prevención del bullying.
 
-Incluye:
-- Nivel general de riesgo de victimización
-- Principales patrones de comportamiento que se puedan inferir
-- Quiénes parecen estar informados de lo que ocurre (amigos, adultos, padres)
-- 3 recomendaciones concretas y prácticas para la escuela
+        Redacta un informe claro, en lenguaje NO técnico, dirigido a directivos
+        y equipos escolares, basándote ÚNICAMENTE en los datos agregados a continuación.
 
-IMPORTANTE:
-- Escribe el informe completamente en ESPAÑOL
-- Usa un tono profesional, empático y orientado a la acción
-- No inventes información que no esté en los datos
+        Incluye:
+        - Nivel general de riesgo de victimización
+        - Principales patrones de comportamiento que se puedan inferir
+        - Quiénes parecen estar informados de lo que ocurre (amigos, adultos, padres)
+        - 3 recomendaciones concretas y prácticas para la escuela
+
+        IMPORTANTE:
+        - Escribe el informe completamente en ESPAÑOL
+        - Usa un tono profesional, empático y orientado a la acción
+        - No inventes información que no esté en los datos
 
 DATOS AGREGADOS:
 {summary}
@@ -427,4 +427,5 @@ elif st.session_state.page == "futuro":
 else:
     st.session_state.page = "menu"
     st.rerun()
+
 
