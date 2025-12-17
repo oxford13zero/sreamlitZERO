@@ -49,7 +49,6 @@ SCALE = {
     "Casi cada día": 4,
 }
 
-# Thresholds (scientific interpretation)
 HIGH_FREQ_THRESHOLD = 2     # mensual o más
 VERY_HIGH_FREQ = 3          # semanal o diaria
 
@@ -133,7 +132,6 @@ def build_long_df(responses, answers, aso, qopts, questions, schools) -> pd.Data
         .merge(qopts, left_on="option_id", right_on="id", how="inner", suffixes=("", "_opt"))
     )
 
-    # Safe merge schools
     if not schools.empty and {"id", "name"}.issubset(schools.columns):
         schools_small = schools[["id", "name"]].rename(columns={"id": "school_pk", "name": "school_name"})
         df = df.merge(schools_small, left_on="school_id", right_on="school_pk", how="left")
@@ -141,18 +139,16 @@ def build_long_df(responses, answers, aso, qopts, questions, schools) -> pd.Data
     else:
         df["school_name"] = df["school_id"].astype(str)
 
-    # Normalize text fields
     df["question_text"] = df["question_text"].fillna("")
     df["option_text"] = df["option_text"].fillna("")
     df["option_code"] = df["option_code"].fillna("").astype(str)
 
-    # Score for frequency questions
     df["score"] = df["option_text"].map(SCALE).fillna(0).astype(float)
 
     return df
 
 # -------------------------------------------------
-# Student-level scientific indicators (uses frequency semantics)
+# Student-level scientific indicators
 # -------------------------------------------------
 def compute_student_metrics(df: pd.DataFrame) -> pd.DataFrame:
     d = df.copy()
@@ -187,6 +183,7 @@ def compute_student_metrics(df: pd.DataFrame) -> pd.DataFrame:
 
 # -------------------------------------------------
 # Demographics extraction FROM OPTIONS (answer_selected_options)
+#   FIXED: always returns same-length series
 # -------------------------------------------------
 def _to_int_safe(x):
     try:
@@ -205,7 +202,6 @@ def _norm_gender_code(x):
     s = str(x).strip().upper()
     if s in {"M", "F", "O", "N"}:
         return s
-    # fallback common variants
     if s.startswith("MASC"):
         return "M"
     if s.startswith("FEM"):
@@ -214,54 +210,56 @@ def _norm_gender_code(x):
 
 def extract_demographics_from_options(df_long: pd.DataFrame, school_filter: str | None = None) -> pd.DataFrame:
     """
-    Returns one row per survey_response_id with columns:
+    One row per survey_response_id:
       survey_response_id, school_name, edad, grado, genero, tiempo
-    Extracted from option_code for the 4 demographic question IDs.
+    Extracted from option_code for demographic question IDs.
     """
+    cols = ["survey_response_id", "school_name", "edad", "grado", "genero", "tiempo"]
     if df_long.empty:
-        return pd.DataFrame(columns=["survey_response_id", "school_name", "edad", "grado", "genero", "tiempo"])
+        return pd.DataFrame(columns=cols)
 
     d = df_long.copy()
-
     if school_filter and school_filter != "(Todas)":
         d = d[d["school_name"] == school_filter]
 
     demo = d[d["question_id"].isin(DEMO_QIDS)].copy()
     if demo.empty:
-        return pd.DataFrame(columns=["survey_response_id", "school_name", "edad", "grado", "genero", "tiempo"])
+        return pd.DataFrame(columns=cols)
 
-    # Keep only what we need
-    demo = demo[["survey_response_id", "school_name", "question_id", "option_code", "option_text"]].copy()
+    demo = demo[["survey_response_id", "school_name", "question_id", "option_code"]].copy()
 
-    # If multiple rows per (response, question), keep first deterministically
+    # 1 row per (response, question)
     demo = (
         demo.sort_values(["survey_response_id", "question_id"])
             .groupby(["survey_response_id", "question_id"], as_index=False)
-            .agg({
-                "school_name": "first",
-                "option_code": "first",
-                "option_text": "first",
-            })
+            .agg({"school_name": "first", "option_code": "first"})
     )
 
-    # Pivot option_code by question_id
     pivot = demo.pivot(index="survey_response_id", columns="question_id", values="option_code")
+    # School name mapping (aligned to pivot.index)
+    school_map = demo.groupby("survey_response_id")["school_name"].first().reindex(pivot.index)
 
-    # Attach school_name
-    school_map = demo.groupby("survey_response_id")["school_name"].first()
-    pivot = pivot.join(school_map, how="left")
+    # helper to ALWAYS return a Series of len(pivot.index)
+    def col_series(qid: str) -> pd.Series:
+        if qid in pivot.columns:
+            return pivot[qid].reindex(pivot.index)
+        return pd.Series([np.nan] * len(pivot.index), index=pivot.index)
 
-    # Build output
+    edad_s = col_series(QID_EDAD).apply(_to_int_safe)
+    grado_s = col_series(QID_GRADO).apply(_to_int_safe)
+    genero_s = col_series(QID_GENERO).apply(_norm_gender_code)
+    tiempo_s = col_series(QID_TIEMPO).apply(_to_int_safe)
+
     out = pd.DataFrame({
         "survey_response_id": pivot.index,
-        "school_name": pivot["school_name"].values if "school_name" in pivot.columns else None,
-        "edad": pd.Series(pivot.get(QID_EDAD, np.nan)).apply(_to_int_safe).values,
-        "grado": pd.Series(pivot.get(QID_GRADO, np.nan)).apply(_to_int_safe).values,
-        "genero": pd.Series(pivot.get(QID_GENERO, np.nan)).apply(_norm_gender_code).values,
-        "tiempo": pd.Series(pivot.get(QID_TIEMPO, np.nan)).apply(_to_int_safe).values,
+        "school_name": school_map.values,
+        "edad": edad_s.values,
+        "grado": grado_s.values,
+        "genero": genero_s.values,
+        "tiempo": tiempo_s.values,
     })
 
-    # Clean ranges (optional sanity)
+    # sanity ranges
     out.loc[(out["edad"] < 0) | (out["edad"] > 120), "edad"] = np.nan
     out.loc[(out["grado"] < 0) | (out["grado"] > 20), "grado"] = np.nan
     out.loc[(out["tiempo"] < 0) | (out["tiempo"] > 50), "tiempo"] = np.nan
@@ -275,7 +273,6 @@ def build_school_summary(view: pd.DataFrame) -> dict:
     n = len(view)
     if n == 0:
         return {}
-
     return {
         "total_estudiantes": int(n),
         "prevalencia_victimizacion_pct": round(100 * view["victim_freq"].mean(), 1),
@@ -336,7 +333,6 @@ def render_40_question_charts(df_long: pd.DataFrame, demo_df: pd.DataFrame, scho
         st.warning("No hay demografía (edad/grado/género/tiempo) en answer_selected_options. Sin eso no se pueden construir los gráficos.")
         return
 
-    # Filter by school if needed
     d = df_long.copy()
     if school_filter and school_filter != "(Todas)":
         d = d[d["school_name"] == school_filter]
@@ -344,37 +340,27 @@ def render_40_question_charts(df_long: pd.DataFrame, demo_df: pd.DataFrame, scho
     else:
         demo = demo_df.copy()
 
-    # Only keep responses with usable grade+gender
     demo = demo.dropna(subset=["grado", "genero"]).copy()
     if demo.empty:
-        st.warning("Demografía existe, pero no hay filas con (grado y género) válidos. No se pueden construir gráficos.")
+        st.warning("Demografía existe, pero no hay filas con (grado y género) válidos.")
         return
 
     demo["grado"] = demo["grado"].astype(int)
     demo["genero"] = demo["genero"].astype(str)
 
-    # Exclude demographic questions from the 40 charts
-    q_df = (
-        d[~d["question_id"].isin(DEMO_QIDS)]
-        .dropna(subset=["question_id"])
-        .copy()
-    )
+    q_df = d[~d["question_id"].isin(DEMO_QIDS)].dropna(subset=["question_id"]).copy()
 
-    # Get distinct questions present
     questions_present = (
         q_df[["question_id", "question_text"]]
         .drop_duplicates()
         .sort_values("question_text")
+        .head(40)
     )
 
     if questions_present.empty:
         st.warning("No hay preguntas no-demográficas para graficar.")
         return
 
-    # Pick first 40 (as requested)
-    questions_present = questions_present.head(40)
-
-    # Merge answers with demographics on response_id
     m = q_df.merge(
         demo[["survey_response_id", "grado", "genero"]],
         on="survey_response_id",
@@ -382,13 +368,11 @@ def render_40_question_charts(df_long: pd.DataFrame, demo_df: pd.DataFrame, scho
     )
 
     if m.empty:
-        st.warning("No hay intersección entre respuestas y demografía. Revisa que survey_response_id coincida y que haya opciones guardadas.")
+        st.warning("No hay intersección entre respuestas y demografía (por survey_response_id).")
         return
 
-    # Make genero categorical order
     m["genero"] = pd.Categorical(m["genero"], categories=GEN_ORDER, ordered=True)
 
-    # Render one chart per question
     for _, row in questions_present.iterrows():
         qid = row["question_id"]
         qtext = row["question_text"]
@@ -397,21 +381,16 @@ def render_40_question_charts(df_long: pd.DataFrame, demo_df: pd.DataFrame, scho
         if sub.empty:
             continue
 
-        # Count unique respondents per (grado, genero)
         counts = (
             sub.groupby(["grado", "genero"])["survey_response_id"]
                .nunique()
                .unstack(fill_value=0)
         )
 
-        # Ensure all gender columns exist
         for g in GEN_ORDER:
             if g not in counts.columns:
                 counts[g] = 0
-        counts = counts[GEN_ORDER]
-
-        # Sort by grade
-        counts = counts.sort_index()
+        counts = counts[GEN_ORDER].sort_index()
 
         st.markdown(f"### {qtext}")
         st.bar_chart(counts, height=320)
@@ -447,7 +426,6 @@ st.bar_chart(view["risk_group"].value_counts())
 
 st.divider()
 
-# Demographics + 40 charts
 demo_df = extract_demographics_from_options(df_long, school_filter=school)
 render_40_question_charts(df_long, demo_df, school_filter=school)
 
@@ -461,7 +439,7 @@ if st.button("Generar informe en lenguaje humano"):
         st.markdown(report)
 
 # -------------------------------------------------
-# Debug (recommended while stabilizing)
+# Debug
 # -------------------------------------------------
 with st.expander("Debug (recomendado ahora)", expanded=False):
     st.write("Rows df_long:", int(len(df_long)))
@@ -471,7 +449,6 @@ with st.expander("Debug (recomendado ahora)", expanded=False):
         st.write("demo_df (head):")
         st.dataframe(demo_df.head(10), use_container_width=True)
 
-    # show counts of demographic answers in df_long by question_id
     dcounts = (
         df_long[df_long["question_id"].isin(DEMO_QIDS)]
         .groupby(["question_id", "question_text"])["survey_response_id"]
@@ -483,7 +460,6 @@ with st.expander("Debug (recomendado ahora)", expanded=False):
     st.write("Respuestas demográficas detectadas en df_long (por question_id):")
     st.dataframe(dcounts, use_container_width=True)
 
-    # show a sample for each demographic question
     sample = (
         df_long[df_long["question_id"].isin(DEMO_QIDS)]
         [["survey_response_id", "question_text", "option_code", "option_text"]]
@@ -492,12 +468,3 @@ with st.expander("Debug (recomendado ahora)", expanded=False):
     )
     st.write("Muestra de filas (demografía) desde options:")
     st.dataframe(sample, use_container_width=True)
-
-    qexamples = (
-        df_long[["question_id", "question_text"]]
-        .drop_duplicates()
-        .sort_values("question_text")
-        .head(12)
-    )
-    st.write("Ejemplos de preguntas (question_text):")
-    st.dataframe(qexamples, use_container_width=True)
