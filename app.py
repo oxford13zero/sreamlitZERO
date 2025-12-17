@@ -1,28 +1,20 @@
-# app.py — Bullying Dashboard (Scientific Indicators + 40 Charts per Question + LLM Report)
+# app.py — Bullying Dashboard (Scientific Indicators + Demographics from selected options + 40 charts)
 
 import os
-import re
-import json
-import hashlib
-from datetime import datetime
-
 import numpy as np
 import pandas as pd
 import streamlit as st
 import requests
-import altair as alt
 from supabase import create_client
 
-
-# =================================================
+# -------------------------------------------------
 # Page config
-# =================================================
+# -------------------------------------------------
 st.set_page_config(page_title="Bullying Dashboard", layout="wide")
 
-
-# =================================================
+# -------------------------------------------------
 # Supabase config
-# =================================================
+# -------------------------------------------------
 SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.getenv("SUPABASE_URL", ""))
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", os.getenv("SUPABASE_KEY", ""))
 
@@ -32,48 +24,22 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# -------------------------------------------------
+# Constants: demographic question UUIDs
+# -------------------------------------------------
+QID_EDAD = "1b5f4f28-8f41-4ed7-9bfa-07d927b2d1b4"
+QID_GRADO = "6b5b3cdd-5e6d-4c02-a6c4-63d7b3c52e30"
+QID_GENERO = "c0a89b93-2b39-4e4c-9f10-8f58dbf8d0c7"
+QID_TIEMPO = "7c5d8e66-1d8d-4f0c-8a4f-8a6b6b5c4c11"
 
-# =================================================
-# Prompt versioning (traceable)
-# =================================================
-PROMPT_VERSION = "ES_v3_scientific_demographics_2025-12-16"
+DEMO_QIDS = {QID_EDAD, QID_GRADO, QID_GENERO, QID_TIEMPO}
 
-LLM_PROMPT_ES = """
-Eres un especialista en convivencia escolar, prevención del bullying y bienestar estudiantil.
-Tu objetivo es ayudar a equipos directivos y docentes a comprender datos agregados de una encuesta.
+GENDER_ORDER = ["M", "F", "O", "N"]
+GENDER_LABELS = {"M": "Hombres", "F": "Mujeres", "O": "Otro", "N": "No responde"}
 
-REGLAS ÉTICAS Y DE CALIDAD (OBLIGATORIAS):
-- No identifiques ni infieras identidades individuales.
-- No culpes a estudiantes. Evita lenguaje estigmatizante.
-- No diagnostiques condiciones clínicas.
-- Si un indicador sugiere riesgo, recomienda rutas de apoyo y protocolos escolares.
-- Sé claro, educativo, y accionable. Usa español neutro.
-
-TAREA:
-Con base SOLO en los datos agregados provistos abajo, redacta un informe breve para administradores escolares.
-
-ESTRUCTURA:
-1) Resumen ejecutivo (3-5 bullets)
-2) Lectura de indicadores (victimización frecuente, alta persistencia, cyber, silencio institucional)
-3) Patrones observables (si existen) por grado y género (si los datos lo permiten)
-4) Recomendaciones prácticas (mínimo 6), separadas en:
-   - Prevención universal
-   - Intervención focalizada
-   - Canales de reporte y protección
-5) Nota metodológica (2-4 líneas): que esto es agregado y depende de la calidad de respuestas.
-
-DATOS AGREGADOS:
-{summary_json}
-
-Incluye al final:
-- "Versión del prompt: {prompt_version}"
-- "Fecha (UTC): {utc_now}"
-""".strip()
-
-
-# =================================================
-# Scoring scale
-# =================================================
+# -------------------------------------------------
+# Scoring scale (frequency-based)
+# -------------------------------------------------
 SCALE = {
     "Nunca": 0,
     "No": 0,
@@ -84,14 +50,38 @@ SCALE = {
     "Casi cada semana": 3,
     "Casi cada día": 4,
 }
+HIGH_FREQ_THRESHOLD = 2
+VERY_HIGH_FREQ = 3
 
-HIGH_FREQ_THRESHOLD = 2  # mensual o más
-VERY_HIGH_FREQ = 3       # semanal o diaria
+# -------------------------------------------------
+# LLM prompt (Spanish, ethical/educational)
+# -------------------------------------------------
+LLM_PROMPT_ES = """
+Eres un/a especialista en convivencia escolar, prevención del acoso y análisis de encuestas.
+Tu objetivo es ayudar a un equipo directivo escolar a interpretar resultados SIN etiquetar ni identificar estudiantes.
+Usa lenguaje respetuoso, educativo, y orientado a acciones de protección.
 
+INSTRUCCIONES:
+- No inventes datos: usa SOLO el resumen agregado entregado.
+- No digas que “todo está perfecto” si hay señales de riesgo; expresa incertidumbre con cuidado.
+- Evita culpabilizar a estudiantes. Enfócate en condiciones del entorno escolar y apoyo.
+- Incluye recomendaciones prácticas y medidas preventivas.
 
-# =================================================
+ENTREGA EN ESPAÑOL con este formato:
+
+1) Lectura general (2–4 líneas)
+2) Señales relevantes (bullets)
+3) Interpretación cuidadosa (2–5 líneas)
+4) Recomendaciones concretas (3–6 bullets)
+5) Siguientes pasos de medición (2–4 bullets)
+
+RESUMEN AGREGADO:
+{summary}
+""".strip()
+
+# -------------------------------------------------
 # Supabase pagination helpers
-# =================================================
+# -------------------------------------------------
 @st.cache_data(ttl=300)
 def _fetch_all(table: str, batch: int = 1000) -> pd.DataFrame:
     rows = []
@@ -112,7 +102,6 @@ def _fetch_all(table: str, batch: int = 1000) -> pd.DataFrame:
         start += batch
     return pd.DataFrame(rows)
 
-
 @st.cache_data(ttl=300)
 def load_tables():
     return (
@@ -124,17 +113,15 @@ def load_tables():
         _fetch_all("schools"),
     )
 
-
-# =================================================
+# -------------------------------------------------
 # Data preparation
-# =================================================
+# -------------------------------------------------
 def build_long_df(responses, answers, aso, qopts, questions, schools) -> pd.DataFrame:
     """
-    Long format with:
-    survey_response_id, school_id, school_name, question_id, question_text, option_id, option_text, option_code, score
+    Long format with one row per selected option.
+    Brings: survey_response_id, school_id, question_id, question_text, option_code, option_text, created_at
     """
-    needed = [responses, answers, aso, qopts, questions]
-    if any(x is None or x.empty for x in needed):
+    if responses.empty or answers.empty or aso.empty or qopts.empty or questions.empty:
         return pd.DataFrame()
 
     df = (
@@ -145,179 +132,107 @@ def build_long_df(responses, answers, aso, qopts, questions, schools) -> pd.Data
         .merge(qopts, left_on="option_id", right_on="id", how="inner", suffixes=("", "_opt"))
     )
 
-    # Merge schools safely
-    if schools is not None and not schools.empty and {"id", "name"}.issubset(schools.columns):
+    # Schools join (safe)
+    if not schools.empty and {"id", "name"}.issubset(schools.columns):
         schools_small = schools[["id", "name"]].rename(columns={"id": "school_pk", "name": "school_name"})
         df = df.merge(schools_small, left_on="school_id", right_on="school_pk", how="left")
         df["school_name"] = df["school_name"].fillna(df["school_id"].astype(str))
     else:
         df["school_name"] = df["school_id"].astype(str)
 
-    df["question_text"] = df.get("question_text", "").fillna("").astype(str)
-    df["option_text"] = df.get("option_text", "").fillna("").astype(str)
-    if "option_code" not in df.columns:
-        df["option_code"] = ""
+    df["question_text"] = df["question_text"].fillna("")
+    df["option_text"] = df["option_text"].fillna("")
+    df["option_code"] = df["option_code"].astype(str)
 
+    # Use answer created_at if present
+    if "created_at_ans" in df.columns:
+        df["created_at_ans"] = pd.to_datetime(df["created_at_ans"], errors="coerce", utc=True)
+    else:
+        df["created_at_ans"] = pd.NaT
+
+    # scoring
     df["score"] = df["option_text"].map(SCALE).fillna(0).astype(float)
     return df
 
-
-# =================================================
-# Demographics extraction (ROBUST: detect by question_text)
-# =================================================
-def _parse_int_from_text(x: str):
-    if x is None:
-        return None
-    s = str(x).strip()
-    m = re.search(r"(\d+)", s)
-    if not m:
-        return None
-    try:
-        return int(m.group(1))
-    except Exception:
-        return None
-
-
-def _detect_demographic_qids(df_long: pd.DataFrame) -> dict:
+# -------------------------------------------------
+# Demographics extraction (FROM SELECTED OPTIONS!)
+# -------------------------------------------------
+def extract_demographics_from_options(df_long: pd.DataFrame) -> pd.DataFrame:
     """
-    Detect demographic question_ids by question_text (robust across recreated surveys).
-    Returns dict: {"edad": qid or None, "grado": qid or None, "genero": qid or None}
+    Returns one row per survey_response_id with columns: grado(int), genero(str), edad(int), tiempo(int), school_name
+    Reads ONLY from df_long option_code/option_text for the demographic question_ids.
     """
-    if df_long is None or df_long.empty:
-        return {"edad": None, "grado": None, "genero": None}
+    if df_long.empty:
+        return pd.DataFrame(columns=["survey_response_id", "school_name", "edad", "grado", "genero", "tiempo"])
 
-    qt = df_long[["question_id", "question_text"]].drop_duplicates().copy()
-    qt["qtext"] = qt["question_text"].astype(str).str.strip().str.lower()
-
-    def pick(patterns):
-        mask = False
-        for p in patterns:
-            mask = mask | qt["qtext"].str.contains(p, regex=True, na=False)
-        hit = qt[mask]
-        if hit.empty:
-            return None
-        # si hay varias, tomamos la primera estable
-        return str(hit.iloc[0]["question_id"])
-
-    edad_qid = pick([r"\bedad\b", r"cu[aá]l es tu edad"])
-    grado_qid = pick([r"\bgrado\b", r"en qu[eé] grado est[aá]s", r"curso"])
-    genero_qid = pick([r"\bg[eé]nero\b", r"cu[aá]l es tu g[eé]nero", r"sexo"])
-
-    return {"edad": edad_qid, "grado": grado_qid, "genero": genero_qid}
-
-
-def extract_demographics(df_long: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
-    """
-    Returns (demo_df, detected_qids)
-    demo_df columns: survey_response_id, edad, grado, genero (M/F/O/N)
-    """
-    detected = _detect_demographic_qids(df_long)
-
-    if df_long is None or df_long.empty:
-        return pd.DataFrame(columns=["survey_response_id", "edad", "grado", "genero"]), detected
-
-    needed = {"survey_response_id", "question_id", "option_text", "option_code", "question_text"}
-    if not needed.issubset(set(df_long.columns)):
-        return pd.DataFrame(columns=["survey_response_id", "edad", "grado", "genero"]), detected
-
-    qid_edad = detected["edad"]
-    qid_grado = detected["grado"]
-    qid_genero = detected["genero"]
-
-    qids = [x for x in [qid_edad, qid_grado, qid_genero] if x]
-    if not qids:
-        return pd.DataFrame(columns=["survey_response_id", "edad", "grado", "genero"]), detected
-
-    demo = df_long[df_long["question_id"].astype(str).isin(qids)].copy()
-    if demo.empty:
-        return pd.DataFrame(columns=["survey_response_id", "edad", "grado", "genero"]), detected
-
-    demo["question_id"] = demo["question_id"].astype(str)
-    demo["option_text"] = demo["option_text"].astype(str)
-    demo["option_code"] = demo["option_code"].astype(str)
-
-    # edad
-    if qid_edad:
-        edad = demo[demo["question_id"] == qid_edad][["survey_response_id", "option_text", "option_code"]].copy()
-    else:
-        edad = pd.DataFrame()
-    if not edad.empty:
-        v1 = edad["option_text"].map(_parse_int_from_text)
-        v2 = edad["option_code"].map(_parse_int_from_text)
-        edad["edad"] = v1.fillna(v2)
-        edad = edad.dropna(subset=["edad"])
-        edad["edad"] = edad["edad"].astype(int)
-        edad = edad[(edad["edad"] >= 6) & (edad["edad"] <= 20)]
-        edad = edad.groupby("survey_response_id", as_index=False)["edad"].first()
-    else:
-        edad = pd.DataFrame(columns=["survey_response_id", "edad"])
-
-    # grado
-    if qid_grado:
-        grado = demo[demo["question_id"] == qid_grado][["survey_response_id", "option_text", "option_code"]].copy()
-    else:
-        grado = pd.DataFrame()
-    if not grado.empty:
-        v1 = grado["option_text"].map(_parse_int_from_text)
-        v2 = grado["option_code"].map(_parse_int_from_text)
-        grado["grado"] = v1.fillna(v2)
-        grado = grado.dropna(subset=["grado"])
-        grado["grado"] = grado["grado"].astype(int)
-        grado = grado[(grado["grado"] >= 1) & (grado["grado"] <= 13)]
-        grado = grado.groupby("survey_response_id", as_index=False)["grado"].first()
-    else:
-        grado = pd.DataFrame(columns=["survey_response_id", "grado"])
-
-    # genero
-    if qid_genero:
-        gender = demo[demo["question_id"] == qid_genero][["survey_response_id", "option_text", "option_code"]].copy()
-    else:
-        gender = pd.DataFrame()
-    if not gender.empty:
-        code = gender["option_code"].str.strip().str.upper()
-        code = code.where(code.isin(["M", "F", "O", "N"]), other=pd.NA)
-
-        txt = gender["option_text"].str.strip().str.lower()
-        c1 = txt.str.startswith("masc", na=False).to_numpy(dtype=bool)
-        c2 = txt.str.startswith("fem", na=False).to_numpy(dtype=bool)
-        c3 = txt.str.contains(r"\botro\b", regex=True, na=False).to_numpy(dtype=bool)
-        c4 = (txt.str.contains("no", na=False) & txt.str.contains("respond", na=False)).to_numpy(dtype=bool)
-
-        fallback = np.select([c1, c2, c3, c4], ["M", "F", "O", "N"], default=np.nan)
-        fallback_series = pd.Series(fallback, index=gender.index)
-
-        gender["genero"] = code.fillna(fallback_series)
-        gender = gender.dropna(subset=["genero"])
-        gender["genero"] = gender["genero"].astype(str).str.upper()
-        gender = gender[gender["genero"].isin(["M", "F", "O", "N"])]
-        gender = gender.groupby("survey_response_id", as_index=False)["genero"].first()
-    else:
-        gender = pd.DataFrame(columns=["survey_response_id", "genero"])
-
-    out = pd.DataFrame({"survey_response_id": demo["survey_response_id"].unique()})
-    out = out.merge(edad, on="survey_response_id", how="left")
-    out = out.merge(grado, on="survey_response_id", how="left")
-    out = out.merge(gender, on="survey_response_id", how="left")
-    return out, detected
-
-
-# =================================================
-# Student indicators
-# =================================================
-def compute_student_metrics(df_long: pd.DataFrame, demo_df: pd.DataFrame) -> pd.DataFrame:
     d = df_long.copy()
 
-    is_victim = d["question_text"].str.contains(r"agredido|molestado|ignorado", case=False, na=False)
-    is_cyber = d["question_text"].str.contains(r"internet|mensajería|mensajes|videos|fotos", case=False, na=False)
-    is_trust_adults = d["question_text"].str.contains(r"adultos|profesores|docentes", case=False, na=False)
+    # filter only demographic questions
+    d = d[d["question_id"].astype(str).isin(DEMO_QIDS)].copy()
+    if d.empty:
+        return pd.DataFrame(columns=["survey_response_id", "school_name", "edad", "grado", "genero", "tiempo"])
+
+    # keep latest per (response, question) if duplicates
+    d["qid"] = d["question_id"].astype(str)
+    d = d.sort_values(["survey_response_id", "qid", "created_at_ans"], ascending=[True, True, True])
+    d_last = d.groupby(["survey_response_id", "qid"], as_index=False).tail(1)
+
+    # helper: code -> int safely
+    def to_int_safe(x):
+        try:
+            if pd.isna(x):
+                return np.nan
+            s = str(x).strip()
+            if s == "":
+                return np.nan
+            return int(float(s))
+        except Exception:
+            return np.nan
+
+    # pivot to columns by question_id
+    pivot = d_last.pivot_table(
+        index=["survey_response_id", "school_name"],
+        columns="qid",
+        values="option_code",
+        aggfunc="first"
+    ).reset_index()
+
+    # map columns
+    pivot["edad"] = pivot.get(QID_EDAD, np.nan).apply(to_int_safe)
+    pivot["grado"] = pivot.get(QID_GRADO, np.nan).apply(to_int_safe)
+
+    # genero already code M/F/O/N
+    g = pivot.get(QID_GENERO, np.nan)
+    if isinstance(g, pd.Series):
+        pivot["genero"] = g.astype(str).str.strip().str.upper().replace({"NAN": np.nan})
+    else:
+        pivot["genero"] = np.nan
+
+    pivot["tiempo"] = pivot.get(QID_TIEMPO, np.nan).apply(to_int_safe)
+
+    # normalize genero
+    pivot.loc[~pivot["genero"].isin(GENDER_ORDER), "genero"] = np.nan
+
+    out = pivot[["survey_response_id", "school_name", "edad", "grado", "genero", "tiempo"]].copy()
+    return out
+
+# -------------------------------------------------
+# Student-level scientific indicators (uses df_long scores on bullying items)
+# -------------------------------------------------
+def compute_student_metrics(df_long: pd.DataFrame) -> pd.DataFrame:
+    d = df_long.copy()
+
+    # Identify victimization items by text
+    is_victim = d["question_text"].str.contains(r"agredid|molestad|ignorado|acoso|bullying", case=False, na=False)
+    is_cyber = d["question_text"].str.contains(r"internet|mensajer|mensaje|video|foto|redes", case=False, na=False)
+    trust_adults = d["question_text"].str.contains(r"adult|profesor|docente|inspect|direct", case=False, na=False)
 
     d["victim_score"] = np.where(is_victim, d["score"], 0)
     d["cyber_score"] = np.where(is_cyber, d["score"], 0)
-    d["trust_adult_score"] = np.where(is_trust_adults, d["score"], 0)
+    d["trust_adult_score"] = np.where(trust_adults, d["score"], 0)
 
     student = d.groupby("survey_response_id").agg(
         school_name=("school_name", "first"),
-        school_id=("school_id", "first"),
         victim_max=("victim_score", "max"),
         cyber_max=("cyber_score", "max"),
         trust_adult_max=("trust_adult_score", "max"),
@@ -331,68 +246,47 @@ def compute_student_metrics(df_long: pd.DataFrame, demo_df: pd.DataFrame) -> pd.
     student["risk_group"] = np.select(
         [student["high_persistence"], student["victim_freq"]],
         ["ALTO", "MEDIO"],
-        default="BAJO",
+        default="BAJO"
     )
-
-    if demo_df is not None and not demo_df.empty:
-        student = student.merge(demo_df, on="survey_response_id", how="left")
 
     return student
 
-
-# =================================================
-# Summary for LLM
-# =================================================
-def build_school_summary(view_students: pd.DataFrame) -> dict:
-    n = int(len(view_students))
+# -------------------------------------------------
+# Aggregated summary for LLM
+# -------------------------------------------------
+def build_school_summary(view_student: pd.DataFrame, view_demo: pd.DataFrame) -> dict:
+    n = len(view_student)
     if n == 0:
         return {}
 
-    def pct(x):
-        return round(100 * float(x.mean()), 1) if len(x) else 0.0
+    # demographic distribution if available
+    grade_dist = {}
+    gender_dist = {}
+    if not view_demo.empty:
+        if "grado" in view_demo.columns:
+            grade_dist = view_demo["grado"].dropna().astype(int).value_counts().sort_index().to_dict()
+        if "genero" in view_demo.columns:
+            gender_dist = view_demo["genero"].dropna().value_counts().to_dict()
 
-    summary = {
-        "total_estudiantes": n,
-        "prevalencia_victimizacion_pct": pct(view_students["victim_freq"]),
-        "prevalencia_cyberbullying_pct": pct(view_students["cyber_freq"]),
-        "alta_persistencia_pct": pct(view_students["high_persistence"]),
-        "silencio_institucional_pct": pct(view_students["silence_flag"]),
-        "distribucion_riesgo": view_students["risk_group"].value_counts().to_dict(),
+    return {
+        "total_estudiantes": int(n),
+        "prevalencia_victimizacion_pct": round(100 * view_student["victim_freq"].mean(), 1),
+        "prevalencia_cyberbullying_pct": round(100 * view_student["cyber_freq"].mean(), 1),
+        "alta_persistencia_pct": round(100 * view_student["high_persistence"].mean(), 1),
+        "silencio_institucional_pct": round(100 * view_student["silence_flag"].mean(), 1),
+        "distribucion_riesgo": view_student["risk_group"].value_counts().to_dict(),
+        "distribucion_grado": grade_dist,
+        "distribucion_genero": gender_dist,
     }
 
-    if "grado" in view_students.columns:
-        g = view_students["grado"].dropna()
-        if len(g):
-            summary["distribucion_grado"] = g.astype(int).value_counts().sort_index().to_dict()
-
-    if "genero" in view_students.columns:
-        ge = view_students["genero"].dropna()
-        if len(ge):
-            summary["distribucion_genero"] = ge.value_counts().to_dict()
-
-    if "edad" in view_students.columns:
-        ed = view_students["edad"].dropna()
-        if len(ed):
-            summary["edad_min"] = int(ed.min())
-            summary["edad_max"] = int(ed.max())
-            summary["edad_promedio"] = round(float(ed.mean()), 2)
-
-    return summary
-
-
-# =================================================
+# -------------------------------------------------
 # LLM (Groq)
-# =================================================
-def _prompt_fingerprint(prompt: str) -> str:
-    return hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:12]
-
-
+# -------------------------------------------------
 def generate_llm_report(summary: dict) -> str:
     provider = st.secrets.get("LLM_PROVIDER", "groq").strip().lower()
     if provider == "groq":
         return _groq_report(summary)
     return "Proveedor LLM no configurado."
-
 
 def _groq_report(summary: dict) -> str:
     api_key = st.secrets.get("GROQ_API_KEY")
@@ -401,13 +295,7 @@ def _groq_report(summary: dict) -> str:
     if not api_key:
         return "Falta la API Key de Groq."
 
-    summary_json = json.dumps(summary, ensure_ascii=False, indent=2)
-    prompt = LLM_PROMPT_ES.format(
-        summary_json=summary_json,
-        prompt_version=PROMPT_VERSION,
-        utc_now=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
-    )
-    _ = _prompt_fingerprint(prompt)
+    prompt = LLM_PROMPT_ES.format(summary=summary)
 
     r = requests.post(
         "https://api.groq.com/openai/v1/chat/completions",
@@ -415,12 +303,12 @@ def _groq_report(summary: dict) -> str:
         json={
             "model": model,
             "messages": [
-                {"role": "system", "content": "Generas informes en español, claros, educativos y éticos."},
+                {"role": "system", "content": "Eres un especialista en convivencia escolar y prevención del bullying."},
                 {"role": "user", "content": prompt},
             ],
             "temperature": 0.3,
         },
-        timeout=30,
+        timeout=45,
     )
 
     if r.status_code != 200:
@@ -428,189 +316,158 @@ def _groq_report(summary: dict) -> str:
 
     return r.json()["choices"][0]["message"]["content"]
 
-
-# =================================================
-# 40 charts: per question (Grade x Gender) with fixed colors
-# =================================================
-GENDER_DOMAIN = ["M", "F", "O", "N"]
-GENDER_LABELS = {"M": "Hombres", "F": "Mujeres", "O": "Otro", "N": "No responde"}
-GENDER_COLORS = {
-    "M": "#1f77b4",  # azul
-    "F": "#f2c400",  # amarillo
-    "O": "#2ca02c",  # verde
-    "N": "#9467bd",  # púrpura
-}
-
-
-def _make_question_chart(counts: pd.DataFrame, question_title: str):
-    counts = counts.copy()
-    counts["Genero"] = counts["genero"].map(GENDER_LABELS).fillna(counts["genero"])
-
-    color_scale = alt.Scale(
-        domain=[GENDER_LABELS[g] for g in GENDER_DOMAIN],
-        range=[GENDER_COLORS[g] for g in GENDER_DOMAIN],
-    )
-
-    chart = (
-        alt.Chart(counts)
-        .mark_bar()
-        .encode(
-            x=alt.X("grado:O", title="Grado"),
-            xOffset=alt.XOffset("Genero:N"),
-            y=alt.Y("n_estudiantes:Q", title="Número de estudiantes"),
-            color=alt.Color("Genero:N", scale=color_scale, legend=alt.Legend(title="Género")),
-            tooltip=[
-                alt.Tooltip("grado:O", title="Grado"),
-                alt.Tooltip("Genero:N", title="Género"),
-                alt.Tooltip("n_estudiantes:Q", title="Estudiantes"),
-            ],
-        )
-        .properties(title=question_title, height=280)
-    )
-    return chart
-
-
-def render_40_question_charts(df_long: pd.DataFrame, demo_df: pd.DataFrame, detected_qids: dict, school_sel: str):
+# -------------------------------------------------
+# Charts: 40 graphs (one per question) — Grade x Gender counts
+# -------------------------------------------------
+def render_40_question_charts(df_long: pd.DataFrame, demo_df: pd.DataFrame, title_prefix: str = ""):
+    """
+    For each non-demographic question, show chart:
+      X = grade
+      Y = counts by gender (M/F/O/N)
+    Count = number of unique students (responses) who answered that question.
+    """
     st.subheader("Gráficos por cada pregunta (40) — Grado × Género")
 
-    if df_long is None or df_long.empty:
-        st.info("No hay datos para graficar.")
-        return
-
-    if demo_df is None or demo_df.empty:
+    if demo_df.empty:
         st.warning("No hay demografía (edad/grado/género). Sin eso no se pueden construir los gráficos.")
-        st.info(f"Detectados por texto: edad={detected_qids.get('edad')}, grado={detected_qids.get('grado')}, genero={detected_qids.get('genero')}")
         return
 
-    # Filter by school
-    d = df_long.copy()
-    if school_sel != "(Todas)":
-        d = d[d["school_name"] == school_sel]
-
-    # Exclude demographic questions by detected IDs
-    demo_qids = [detected_qids.get("edad"), detected_qids.get("grado"), detected_qids.get("genero")]
-    demo_qids = [x for x in demo_qids if x]
-    if demo_qids:
-        d = d[~d["question_id"].astype(str).isin(demo_qids)]
-
-    if d.empty:
-        st.info("No hay respuestas no-demográficas para graficar en este filtro.")
+    # Only keep responses with grade and gender
+    demo_ok = demo_df.dropna(subset=["grado", "genero"]).copy()
+    if demo_ok.empty:
+        st.warning("Demografía incompleta: faltan grado o género en todas las respuestas.")
         return
 
-    q_table = (
-        d[["question_id", "question_text"]]
-        .dropna()
+    demo_ok["grado"] = demo_ok["grado"].astype(int)
+    demo_ok["genero"] = demo_ok["genero"].astype(str)
+
+    # Pick the first 40 non-demographic questions from df_long (stable order)
+    q_meta = (
+        df_long[~df_long["question_id"].astype(str).isin(DEMO_QIDS)]
+        .loc[:, ["question_id", "question_text"]]
         .drop_duplicates()
-        .assign(question_text=lambda x: x["question_text"].astype(str).str.strip())
+        .reset_index(drop=True)
     )
-    q_table = q_table[q_table["question_text"] != ""]
-    if q_table.empty:
-        st.info("No se encontraron textos de preguntas para mostrar.")
+
+    if q_meta.empty:
+        st.warning("No se encontraron preguntas no-demográficas en los datos.")
         return
 
-    q_table = q_table.sort_values("question_text").head(40).reset_index(drop=True)
+    q_meta_40 = q_meta.head(40)
 
-    # Merge demographics once
-    d = d.merge(demo_df, on="survey_response_id", how="left")
+    # For each question, find which responses answered it (as selected options)
+    # df_long has one row per selected option; we want unique (survey_response_id, question_id)
+    answered = (
+        df_long[~df_long["question_id"].astype(str).isin(DEMO_QIDS)]
+        .loc[:, ["survey_response_id", "question_id"]]
+        .drop_duplicates()
+    )
 
-    d["grado"] = pd.to_numeric(d["grado"], errors="coerce")
-    d["genero"] = d["genero"].astype(str).str.upper()
-    d = d.dropna(subset=["grado", "genero"])
-    d["grado"] = d["grado"].astype(int)
-    d = d[d["genero"].isin(GENDER_DOMAIN)]
+    # Join answered with demographics to get grade+gender for each answered item
+    answered_demo = answered.merge(
+        demo_ok[["survey_response_id", "grado", "genero"]],
+        on="survey_response_id",
+        how="inner"
+    )
 
-    if d.empty:
-        st.warning("Hay respuestas, pero no hay suficientes registros con (grado + género) para graficar.")
-        return
+    # Normalize gender buckets
+    answered_demo["genero"] = answered_demo["genero"].where(answered_demo["genero"].isin(GENDER_ORDER), np.nan)
+    answered_demo = answered_demo.dropna(subset=["genero"])
 
-    st.caption("Cada gráfico cuenta estudiantes distintos que respondieron esa pregunta (por grado y género).")
-
-    for i, row in q_table.iterrows():
+    for _, row in q_meta_40.iterrows():
         qid = str(row["question_id"])
-        qtext = str(row["question_text"]).strip()
+        qtext = (row["question_text"] or "").strip()
+        if not qtext:
+            qtext = f"Pregunta {qid}"
 
-        dd = d[d["question_id"].astype(str) == qid].copy()
-        if dd.empty:
+        # Filter answers for this question
+        sub = answered_demo[answered_demo["question_id"].astype(str) == qid].copy()
+        if sub.empty:
+            st.caption(f"**{qtext}**")
+            st.info("Sin respuestas para esta pregunta.")
+            st.divider()
             continue
 
-        counts = (
-            dd.groupby(["grado", "genero"])["survey_response_id"]
+        # Build pivot: index=grade, columns=gender, values=count of responses
+        pivot = (
+            sub.groupby(["grado", "genero"])["survey_response_id"]
             .nunique()
-            .reset_index(name="n_estudiantes")
+            .reset_index(name="n")
+            .pivot(index="grado", columns="genero", values="n")
+            .fillna(0)
+            .astype(int)
         )
 
-        # Full grid 1..13 × genders
-        full = pd.DataFrame(
-            [{"grado": gr, "genero": g} for gr in range(1, 14) for g in GENDER_DOMAIN]
-        )
-        counts = full.merge(counts, on=["grado", "genero"], how="left").fillna({"n_estudiantes": 0})
-        counts["n_estudiantes"] = counts["n_estudiantes"].astype(int)
+        # Ensure all gender columns exist
+        for g in GENDER_ORDER:
+            if g not in pivot.columns:
+                pivot[g] = 0
+        pivot = pivot[GENDER_ORDER]
 
-        with st.expander(f"{i+1}. {qtext}", expanded=(i == 0)):
-            st.altair_chart(_make_question_chart(counts, qtext), use_container_width=True)
+        # nicer column names for display
+        pivot_disp = pivot.rename(columns=GENDER_LABELS).sort_index()
 
-            with st.expander("Ver tabla (grado × género)", expanded=False):
-                pivot = counts.pivot(index="grado", columns="genero", values="n_estudiantes").fillna(0).astype(int)
-                pivot = pivot.reindex(range(1, 14))
-                pivot = pivot.rename(columns=GENDER_LABELS)
-                st.dataframe(pivot, use_container_width=True)
+        st.caption(f"**{qtext}**")
+        st.bar_chart(pivot_disp)
+        st.divider()
 
-
-# =================================================
+# -------------------------------------------------
 # UI
-# =================================================
+# -------------------------------------------------
 st.title("Dashboard de Convivencia Escolar — Análisis Científico")
 
 responses, answers, aso, qopts, questions, schools = load_tables()
 
 df_long = build_long_df(responses, answers, aso, qopts, questions, schools)
 if df_long.empty:
-    st.warning("Aún no hay datos suficientes para análisis.")
+    st.warning("Aún no hay datos suficientes para análisis (faltan tablas o respuestas).")
     st.stop()
 
-demo_df, detected_qids = extract_demographics(df_long)
-student = compute_student_metrics(df_long, demo_df)
+student = compute_student_metrics(df_long)
 
+# Demographics now from selected options
+demo_df = extract_demographics_from_options(df_long)
+
+# Sidebar: school filter
 school_list = sorted(student["school_name"].dropna().unique().tolist())
-school_sel = st.sidebar.selectbox("Escuela", ["(Todas)"] + school_list)
+school = st.sidebar.selectbox("Escuela", ["(Todas)"] + school_list)
 
-view_students = student if school_sel == "(Todas)" else student[student["school_name"] == school_sel]
+view_student = student if school == "(Todas)" else student[student["school_name"] == school]
+view_demo = demo_df if school == "(Todas)" else demo_df[demo_df["school_name"] == school]
 
+# Top metrics
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("Estudiantes", int(len(view_students)))
-c2.metric("Victimización ≥ mensual", f"{(view_students['victim_freq'].mean()*100):.1f}%")
-c3.metric("Alta persistencia", f"{(view_students['high_persistence'].mean()*100):.1f}%")
-c4.metric("Silencio institucional", f"{(view_students['silence_flag'].mean()*100):.1f}%")
+c1.metric("Estudiantes", int(len(view_student)))
+c2.metric("Victimización ≥ mensual", f"{view_student['victim_freq'].mean()*100:.1f}%")
+c3.metric("Alta persistencia", f"{view_student['high_persistence'].mean()*100:.1f}%")
+c4.metric("Silencio institucional", f"{view_student['silence_flag'].mean()*100:.1f}%")
 
 st.divider()
 
 st.subheader("Distribución de niveles de riesgo")
-st.bar_chart(view_students["risk_group"].value_counts())
+st.bar_chart(view_student["risk_group"].value_counts())
 
 st.divider()
 
-render_40_question_charts(df_long, demo_df, detected_qids, school_sel)
+# 40 charts: Grade x Gender per question
+render_40_question_charts(df_long if school == "(Todas)" else df_long[df_long["school_name"] == school], view_demo)
 
 st.divider()
 
 st.subheader("Informe interpretativo (IA)")
-
 if st.button("Generar informe en lenguaje humano"):
     with st.spinner("Generando informe..."):
-        summary = build_school_summary(view_students)
+        summary = build_school_summary(view_student, view_demo)
         report = generate_llm_report(summary)
         st.markdown(report)
 
-with st.expander("Debug (recomendado ahora)", expanded=True):
-    st.write("Rows df_long:", len(df_long))
-    st.write("Demografía detectada por texto:", detected_qids)
-    st.write("Rows demo_df:", len(demo_df))
-    if not df_long.empty:
-        st.write("Ejemplos de preguntas (question_text):")
-        st.dataframe(
-            df_long[["question_id", "question_text"]].drop_duplicates().head(30),
-            use_container_width=True
-        )
-    if not demo_df.empty:
-        st.write("Demografía (muestra):")
-        st.dataframe(demo_df.head(20), use_container_width=True)
+with st.expander("Debug (recomendado ahora)"):
+    st.write("Rows df_long:", int(len(df_long)))
+    st.write("Rows demo_df:", int(len(demo_df)))
+    st.write("Ejemplo demo_df (head):")
+    st.dataframe(demo_df.head(20))
+    st.write("Ejemplos de preguntas (question_text):")
+    st.dataframe(
+        df_long.loc[:, ["question_id", "question_text"]].drop_duplicates().head(10),
+        use_container_width=True
+    )
