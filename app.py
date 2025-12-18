@@ -1,6 +1,12 @@
 # app.py — Bullying Dashboard (Scientific Indicators + Demographics + 40 Charts + LLM Report)
 # FIXED: Uses submitted only, avoids false negatives from missing answers, uses prevalence + thresholds, silence flags,
 # robust denominators, and keeps 40 charts (Grado × Género) from selected options.
+#
+# DASHBOARD UPDATE (visible-first):
+# - KPIs show % + counts (with correct denominators)
+# - Adds “semaforo” (5/10/20) based on victimización frecuente
+# - Adds explicit caution about subreporte + “silencio institucional”
+# - Adds subgroup blocks (género/grado × victim/cyber) with correct denominators
 
 import os
 import numpy as np
@@ -68,6 +74,21 @@ def threshold_flag(pct: float) -> str:
     if pct >= 5:
         return "ATENCION"
     return "MONITOREO"
+
+def risk_level_message(pct: float) -> tuple[str, str]:
+    """
+    pct in 0..100 (prevalencia absoluta)
+    """
+    lvl = threshold_flag(pct)
+    if lvl == "CRISIS":
+        return lvl, "≥20% reporta victimización frecuente (≥ mensual). Requiere acción inmediata a nivel escuela."
+    if lvl == "INTERVENCION":
+        return lvl, "≥10% reporta victimización frecuente (≥ mensual). Requiere intervención estructurada."
+    if lvl == "ATENCION":
+        return lvl, "≥5% reporta victimización frecuente (≥ mensual). Requiere monitoreo y acciones preventivas."
+    if lvl == "MONITOREO":
+        return lvl, "<5% reporta victimización frecuente (≥ mensual). Mantener monitoreo preventivo."
+    return lvl, "Sin datos suficientes para clasificar el nivel."
 
 # -------------------------------------------------
 # LLM Prompt (ES)
@@ -184,13 +205,36 @@ def _safe_bool_rate(series: pd.Series) -> dict:
     n_missing = int(s.isna().sum())
     n_with = int(n_total - n_missing)
     if n_with == 0:
-        return {"pct": np.nan, "n_with_data": 0, "n_missing": n_missing, "missing_pct": round(100*n_missing/n_total, 1) if n_total else np.nan}
+        return {
+            "pct": np.nan,
+            "n_with_data": 0,
+            "n_missing": n_missing,
+            "missing_pct": round(100 * n_missing / n_total, 1) if n_total else np.nan
+        }
     pct = float((s.dropna().astype(bool).mean()) * 100.0)
     return {
         "pct": round(pct, 1),
         "n_with_data": n_with,
         "n_missing": n_missing,
-        "missing_pct": round(100*n_missing/n_total, 1) if n_total else np.nan,
+        "missing_pct": round(100 * n_missing / n_total, 1) if n_total else np.nan,
+    }
+
+def _safe_bool_count(series: pd.Series) -> dict:
+    """
+    Returns counts consistent with _safe_bool_rate:
+      - n_true among non-missing
+      - n_with_data
+      - n_missing
+    """
+    if series is None or len(series) == 0:
+        return {"n_true": 0, "n_with_data": 0, "n_missing": 0}
+    s = series.copy()
+    n_missing = int(s.isna().sum())
+    s2 = s.dropna().astype(bool)
+    return {
+        "n_true": int(s2.sum()),
+        "n_with_data": int(len(s2)),
+        "n_missing": int(n_missing)
     }
 
 # -------------------------------------------------
@@ -223,13 +267,7 @@ def build_answer_level_df(responses, answers, aso, qopts, questions, schools) ->
         .merge(questions, left_on="question_id", right_on="id", suffixes=("", "_q"))
     )
 
-    # Normalize expected columns
-    if "id_ans" not in base.columns and "id" in base.columns:
-        # after merges, 'id' might exist multiple times; we used suffixes but ensure answer id is present
-        pass
-
     # In our merge, answer id should be "id_ans" (from answers) due to suffixes.
-    # If not, try fallback:
     ans_id_col = "id_ans" if "id_ans" in base.columns else _pick_col(base, ["id_x", "id", "id_answer"])
     if ans_id_col is None:
         return pd.DataFrame()
@@ -256,8 +294,7 @@ def build_answer_level_df(responses, answers, aso, qopts, questions, schools) ->
 
     # Attach option text/code (LEFT)
     if qopts is not None and not qopts.empty and "id" in qopts.columns:
-        qopts_small = qopts.copy()
-        qopts_small = qopts_small.rename(columns={"id": "option_pk"})
+        qopts_small = qopts.copy().rename(columns={"id": "option_pk"})
         base = base.merge(
             qopts_small,
             left_on="option_id",
@@ -280,38 +317,29 @@ def build_answer_level_df(responses, answers, aso, qopts, questions, schools) ->
     base["opt_text"] = base["opt_text"].replace({"nan": "", "None": ""}).fillna("")
 
     # Score: ONLY when we have a meaningful opt_text (otherwise NaN)
-    # (Important: missing answer must NOT become 0.)
     base["score"] = base["opt_text"].map(SCALE)
     base.loc[base["opt_text"].astype(str).str.strip().eq(""), "score"] = np.nan
     base["score"] = pd.to_numeric(base["score"], errors="coerce")
 
-    # Ensure unique key columns exist
-    # survey_response_id, question_id are critical
     if "survey_response_id" not in base.columns:
-        # from answers merge it should exist
         return pd.DataFrame()
 
     return base
 
 # -------------------------------------------------
-# Build selected-options DF for charts (like your old df_long)
-# 1 row per (question_answer_id, option_id) INNER join only for selected
+# Build selected-options DF for charts
+# 1 row per (question_answer_id, option_id) ONLY where option_id exists
 # -------------------------------------------------
 def build_selected_df(answer_level_df: pd.DataFrame) -> pd.DataFrame:
     if answer_level_df.empty:
         return pd.DataFrame()
-    df = answer_level_df[answer_level_df["option_id"].notna()].copy()
-    return df
+    return answer_level_df[answer_level_df["option_id"].notna()].copy()
 
 # -------------------------------------------------
 # Construct configuration (RECOMMENDED: fill with explicit question_id lists)
 # Fallback: regex on question_text if lists are empty.
 # -------------------------------------------------
 CONSTRUCTS = {
-    # Put your exact question_ids here when you have them:
-    # "victim_qids": ["...uuid...", "..."],
-    # "cyber_qids":  ["...uuid...", "..."],
-    # "trust_qids":  ["...uuid...", "..."],
     "victim_qids": [],
     "cyber_qids": [],
     "trust_qids": [],
@@ -330,7 +358,6 @@ def compute_student_metrics(answer_level_df: pd.DataFrame) -> pd.DataFrame:
 
     d = answer_level_df.copy()
 
-    # Identify constructs by IDs if available, else regex on question_text
     if CONSTRUCTS["victim_qids"]:
         is_victim = d["question_id"].isin(CONSTRUCTS["victim_qids"])
     else:
@@ -346,24 +373,18 @@ def compute_student_metrics(answer_level_df: pd.DataFrame) -> pd.DataFrame:
     else:
         is_trust = d["question_text"].str.contains(TRUST_REGEX, case=False, na=False)
 
-    # Keep only rows relevant to each construct
-    # score is NaN if missing answer (important)
     d_v = d[is_victim][["survey_response_id", "school_name", "score"]].copy()
     d_c = d[is_cyber][["survey_response_id", "score"]].copy()
     d_t = d[is_trust][["survey_response_id", "score"]].copy()
 
-    # Aggregate with NaN-aware max:
-    # if all scores are NaN for a student (never answered construct items) -> result stays NaN
     victim_max = d_v.groupby("survey_response_id")["score"].max(min_count=1)
-    cyber_max = d_c.groupby("survey_response_id")["score"].max(min_count=1)
-    trust_max = d_t.groupby("survey_response_id")["score"].max(min_count=1)
+    cyber_max  = d_c.groupby("survey_response_id")["score"].max(min_count=1)
+    trust_max  = d_t.groupby("survey_response_id")["score"].max(min_count=1)
 
-    # Determine if they answered any items in each construct
     victim_answered = d_v.groupby("survey_response_id")["score"].apply(lambda s: s.notna().any())
-    cyber_answered = d_c.groupby("survey_response_id")["score"].apply(lambda s: s.notna().any())
-    trust_answered = d_t.groupby("survey_response_id")["score"].apply(lambda s: s.notna().any())
+    cyber_answered  = d_c.groupby("survey_response_id")["score"].apply(lambda s: s.notna().any())
+    trust_answered  = d_t.groupby("survey_response_id")["score"].apply(lambda s: s.notna().any())
 
-    # Base student frame from submitted responses in df
     base = (
         d.groupby("survey_response_id")
         .agg(
@@ -371,10 +392,9 @@ def compute_student_metrics(answer_level_df: pd.DataFrame) -> pd.DataFrame:
             school_id=("school_id", "first"),
         )
         .reset_index()
+        .set_index("survey_response_id")
     )
 
-    # Attach aggregates
-    base = base.set_index("survey_response_id")
     base["victim_max"] = victim_max
     base["cyber_max"] = cyber_max
     base["trust_adult_max"] = trust_max
@@ -383,43 +403,33 @@ def compute_student_metrics(answer_level_df: pd.DataFrame) -> pd.DataFrame:
     base["trust_answered"] = trust_answered
     base = base.reset_index()
 
-    # Convert to boolean indicators but keep NA if not answered
     base["victim_freq"] = np.where(base["victim_answered"], base["victim_max"] >= HIGH_FREQ_THRESHOLD, np.nan)
-    base["cyber_freq"] = np.where(base["cyber_answered"], base["cyber_max"] >= HIGH_FREQ_THRESHOLD, np.nan)
+    base["cyber_freq"]  = np.where(base["cyber_answered"],  base["cyber_max"]  >= HIGH_FREQ_THRESHOLD, np.nan)
 
     base["victim_persist"] = np.where(base["victim_answered"], base["victim_max"] >= VERY_HIGH_FREQ, np.nan)
-    base["cyber_persist"] = np.where(base["cyber_answered"], base["cyber_max"] >= VERY_HIGH_FREQ, np.nan)
+    base["cyber_persist"]  = np.where(base["cyber_answered"],  base["cyber_max"]  >= VERY_HIGH_FREQ, np.nan)
 
-    # Any persistence (if either has data)
     base["any_persist"] = np.where(
         (base["victim_answered"] | base["cyber_answered"]),
         (pd.Series(base["victim_persist"]).fillna(False) | pd.Series(base["cyber_persist"]).fillna(False)),
         np.nan
     )
 
-    # Silence flags:
-    # STRICT: victim_freq True AND trust answered AND trust score == 0
     base["silence_flag_strict"] = np.where(
         (base["victim_freq"] == True) & (base["trust_answered"] == True) & (base["trust_adult_max"] == 0),
         True,
         np.where((base["victim_freq"] == True) & (base["trust_answered"] == True), False, np.nan)
     )
 
-    # MISSING: victim_freq True AND trust not answered
     base["silence_flag_missing"] = np.where(
         (base["victim_freq"] == True) & (base["trust_answered"] == False),
         True,
         np.where((base["victim_freq"] == True), False, np.nan)
     )
 
-    # Risk group (student-level) — keep NA safe:
-    # ALTO if victim_persist True OR cyber_persist True
-    # MEDIO if victim_freq True OR cyber_freq True
-    # BAJO otherwise (but only if at least one construct answered)
     answered_any = (base["victim_answered"].fillna(False) | base["cyber_answered"].fillna(False)).astype(bool)
-
     high = (pd.Series(base["victim_persist"]).fillna(False) | pd.Series(base["cyber_persist"]).fillna(False)).astype(bool)
-    med = (pd.Series(base["victim_freq"]).fillna(False) | pd.Series(base["cyber_freq"]).fillna(False)).astype(bool)
+    med  = (pd.Series(base["victim_freq"]).fillna(False)   | pd.Series(base["cyber_freq"]).fillna(False)).astype(bool)
 
     base["risk_group"] = np.select(
         [answered_any & high, answered_any & (~high) & med, answered_any & (~high) & (~med)],
@@ -433,10 +443,6 @@ def compute_student_metrics(answer_level_df: pd.DataFrame) -> pd.DataFrame:
 # Demografía: desde opciones seleccionadas (selected_df)
 # -------------------------------------------------
 def extract_demographics_from_options(selected_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    1 fila por survey_response_id con:
-    edad (Int64), grado (Int64), genero (M/F/O/N), tiempo (Int64)
-    """
     if selected_df.empty:
         return pd.DataFrame(columns=["survey_response_id", "school_name", "edad", "grado", "genero", "tiempo"])
 
@@ -444,7 +450,6 @@ def extract_demographics_from_options(selected_df: pd.DataFrame) -> pd.DataFrame
     if demo_rows.empty:
         return pd.DataFrame(columns=["survey_response_id", "school_name", "edad", "grado", "genero", "tiempo"])
 
-    # Prefer opt_code if present else opt_text
     demo_rows["value_raw"] = demo_rows["opt_code"]
     demo_rows.loc[demo_rows["value_raw"].astype(str).str.strip().eq(""), "value_raw"] = demo_rows["opt_text"]
 
@@ -460,8 +465,8 @@ def extract_demographics_from_options(selected_df: pd.DataFrame) -> pd.DataFrame
             return pivot[qid]
         return pd.Series([None] * len(pivot), index=pivot.index)
 
-    edad_s = col_series(QID_EDAD).apply(_to_int_safe)
-    grado_s = col_series(QID_GRADO).apply(_to_int_safe)
+    edad_s   = col_series(QID_EDAD).apply(_to_int_safe)
+    grado_s  = col_series(QID_GRADO).apply(_to_int_safe)
     tiempo_s = col_series(QID_TIEMPO).apply(_to_int_safe)
     genero_s = col_series(QID_GENERO).apply(_norm_gender_from_value)
 
@@ -483,10 +488,6 @@ def extract_demographics_from_options(selected_df: pd.DataFrame) -> pd.DataFrame
 # Subgroup prevalence helper (no ML, denominators correct)
 # -------------------------------------------------
 def subgroup_prevalence(student_df: pd.DataFrame, demo_df: pd.DataFrame, indicator_col: str, group_col: str) -> pd.DataFrame:
-    """
-    Returns prevalence by subgroup with:
-      subgroup, n_students, n_with_data, missing_pct, pct_true
-    """
     if student_df.empty or demo_df.empty:
         return pd.DataFrame()
 
@@ -494,26 +495,25 @@ def subgroup_prevalence(student_df: pd.DataFrame, demo_df: pd.DataFrame, indicat
     if group_col not in merged.columns:
         return pd.DataFrame()
 
-    # Only keep groups that exist (non-null)
     merged = merged[merged[group_col].notna()].copy()
     if merged.empty:
         return pd.DataFrame()
 
-    # Compute per group
     rows = []
     for g, sub in merged.groupby(group_col):
         s = sub[indicator_col]
         stats = _safe_bool_rate(s)
+        cnts = _safe_bool_count(s)
         rows.append({
             group_col: g,
             "n_students": int(len(sub)),
             "n_with_data": int(stats["n_with_data"]),
+            "n_true": int(cnts["n_true"]),
             "missing_pct": stats["missing_pct"],
             "pct_true": stats["pct"],
         })
 
-    out = pd.DataFrame(rows).sort_values(["pct_true", "n_students"], ascending=[False, False])
-    return out
+    return pd.DataFrame(rows).sort_values(["pct_true", "n_students"], ascending=[False, False])
 
 # -------------------------------------------------
 # Charts: 40 gráficos por pregunta (Grado x Género)
@@ -558,7 +558,6 @@ def render_40_question_charts(selected_df: pd.DataFrame, demo_df: pd.DataFrame, 
         if sub.empty:
             continue
 
-        # Count unique students per grade/gender (avoid multi-select duplicates)
         sub_unique = sub.drop_duplicates(subset=["survey_response_id", "grado", "genero"])
 
         counts = (
@@ -598,35 +597,16 @@ def build_school_summary(student_view: pd.DataFrame, demo_view: pd.DataFrame) ->
     silence_strict_stats = _safe_bool_rate(student_view["silence_flag_strict"])
     silence_missing_stats = _safe_bool_rate(student_view["silence_flag_missing"])
 
-    # Risk distribution (student-level)
     risk_dist = student_view["risk_group"].value_counts(dropna=False).to_dict()
 
     summary = {
         "n_estudiantes_submitted": n,
-        "victimizacion_mensual": {
-            **victim_stats,
-            "threshold_flag": threshold_flag(victim_stats["pct"]),
-        },
-        "cyberbullying_mensual": {
-            **cyber_stats,
-            "threshold_flag": threshold_flag(cyber_stats["pct"]),
-        },
-        "persistencia_victimizacion_semanal": {
-            **victim_persist_stats,
-            "threshold_flag": threshold_flag(victim_persist_stats["pct"]),
-        },
-        "persistencia_cyber_semanal": {
-            **cyber_persist_stats,
-            "threshold_flag": threshold_flag(cyber_persist_stats["pct"]),
-        },
-        "persistencia_cualquier_semanal": {
-            **any_persist_stats,
-            "threshold_flag": threshold_flag(any_persist_stats["pct"]),
-        },
-        "silencio_institucional_strict": {
-            **silence_strict_stats,
-            "threshold_flag": threshold_flag(silence_strict_stats["pct"]),
-        },
+        "victimizacion_mensual": {**victim_stats, "threshold_flag": threshold_flag(victim_stats["pct"])},
+        "cyberbullying_mensual": {**cyber_stats, "threshold_flag": threshold_flag(cyber_stats["pct"])},
+        "persistencia_victimizacion_semanal": {**victim_persist_stats, "threshold_flag": threshold_flag(victim_persist_stats["pct"])},
+        "persistencia_cyber_semanal": {**cyber_persist_stats, "threshold_flag": threshold_flag(cyber_persist_stats["pct"])},
+        "persistencia_cualquier_semanal": {**any_persist_stats, "threshold_flag": threshold_flag(any_persist_stats["pct"])},
+        "silencio_institucional_strict": {**silence_strict_stats, "threshold_flag": threshold_flag(silence_strict_stats["pct"])},
         "silencio_institucional_missing_trust": {
             **silence_missing_stats,
             "note": "Bandera de medición: victimización frecuente con confianza en adultos sin respuesta (posible subreporte o falta de seguridad).",
@@ -634,8 +614,6 @@ def build_school_summary(student_view: pd.DataFrame, demo_view: pd.DataFrame) ->
         "distribucion_riesgo_estudiante": risk_dist,
     }
 
-    # Subgrupos mínimos (sin ML)
-    # (Solo si demo_view trae esos campos)
     if demo_view is not None and not demo_view.empty:
         if "genero" in demo_view.columns:
             by_gender_victim = subgroup_prevalence(student_view, demo_view, "victim_freq", "genero")
@@ -643,11 +621,9 @@ def build_school_summary(student_view: pd.DataFrame, demo_view: pd.DataFrame) ->
                 summary["subgrupos_genero_victim_freq"] = by_gender_victim.head(10).to_dict("records")
 
         if "edad" in demo_view.columns:
-            # bucket simple por edad (si hay muchas edades distintas)
             demo_age = demo_view.copy()
             if demo_age["edad"].notna().sum() > 0:
                 demo_age["edad_bucket"] = demo_age["edad"].astype("Int64").astype(str)
-                # you can later bucket ranges; for now keep exact
                 by_age_cyber = subgroup_prevalence(student_view, demo_age, "cyber_freq", "edad_bucket")
                 if not by_age_cyber.empty:
                     summary["subgrupos_edad_cyber_freq"] = by_age_cyber.head(10).to_dict("records")
@@ -699,22 +675,18 @@ def _groq_report(summary: dict) -> str:
     return r.json()["choices"][0]["message"]["content"]
 
 # -------------------------------------------------
-# UI
+# UI  (UPDATED: visible-first dashboard)
 # -------------------------------------------------
-st.title("Dashboard de Convivencia Escolar — Análisis Científico")
+st.title("Dashboard de Convivencia Escolar — Indicadores Científicos")
 
 responses, answers, aso, qopts, questions, schools = load_tables()
 
-# Build answer-level DF (scientific indicators)
 answer_level = build_answer_level_df(responses, answers, aso, qopts, questions, schools)
 if answer_level.empty:
     st.warning("Aún no hay datos suficientes para análisis (o no hay encuestas con status=submitted).")
     st.stop()
 
-# Build selected DF (for charts/demographics)
 selected_df = build_selected_df(answer_level)
-
-# Student metrics (scientific indicators)
 student = compute_student_metrics(answer_level)
 
 if student.empty:
@@ -723,112 +695,147 @@ if student.empty:
 
 school_list = sorted(student["school_name"].dropna().unique().tolist())
 school = st.sidebar.selectbox("Escuela", ["(Todas)"] + school_list)
-
 view = student if school == "(Todas)" else student[student["school_name"] == school]
 
-# Demographics from selected options
 demo_df = extract_demographics_from_options(selected_df)
 demo_view = demo_df if school == "(Todas)" else demo_df[demo_df["school_name"] == school].copy()
 
-st.subheader("Indicadores científicos (prevalencias con denominador correcto)")
+# -----------------------------
+# A) KPIs (prevalencia + conteo)
+# -----------------------------
+st.subheader("Panel principal (prevalencia + conteos)")
+
+vict = _safe_bool_rate(view["victim_freq"]); vict_c = _safe_bool_count(view["victim_freq"])
+pers = _safe_bool_rate(view["any_persist"]); pers_c = _safe_bool_count(view["any_persist"])
+cybr = _safe_bool_rate(view["cyber_freq"]); cybr_c = _safe_bool_count(view["cyber_freq"])
+sil  = _safe_bool_rate(view["silence_flag_strict"]); sil_c = _safe_bool_count(view["silence_flag_strict"])
+
+def _fmt_pct(p):
+    return f"{p:.1f}%" if p is not None and not (isinstance(p, float) and np.isnan(p)) else "NA"
+
+def _fmt_count(n_true, n_with):
+    return f"{n_true}/{n_with}" if n_with and n_with > 0 else "0/0"
 
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("Estudiantes (submitted)", len(view))
+c1.metric("Estudiantes (submitted)", f"{len(view)}")
+c2.metric("Victimización frecuente (≥ mensual)", _fmt_pct(vict["pct"]), _fmt_count(vict_c["n_true"], vict_c["n_with_data"]))
+c3.metric("Persistencia alta (≥ semanal)", _fmt_pct(pers["pct"]), _fmt_count(pers_c["n_true"], pers_c["n_with_data"]))
+c4.metric("Silencio institucional (strict)", _fmt_pct(sil["pct"]), _fmt_count(sil_c["n_true"], sil_c["n_with_data"]))
 
-vict = _safe_bool_rate(view["victim_freq"])
-persist = _safe_bool_rate(view["any_persist"])
-sil = _safe_bool_rate(view["silence_flag_strict"])
+st.caption(
+    "Nota metodológica: los valores 'NA' o 'missing' indican falta de respuesta (no se convierten a 0). "
+    "Cero reportes no prueba ausencia; puede existir subreporte."
+)
 
-c2.metric("Victimización ≥ mensual", f"{vict['pct'] if not np.isnan(vict['pct']) else 'NA'}%")
-c3.metric("Persistencia (≥ semanal)", f"{persist['pct'] if not np.isnan(persist['pct']) else 'NA'}%")
-c4.metric("Silencio institucional (strict)", f"{sil['pct'] if not np.isnan(sil['pct']) else 'NA'}%")
+# -----------------------------
+# B) Semáforo (5/10/20) por victimización frecuente
+# -----------------------------
+st.divider()
+lvl, msg = risk_level_message(vict["pct"])
+if lvl == "CRISIS":
+    st.error(f"Semáforo (victimización ≥ mensual): {lvl} — {msg}")
+elif lvl == "INTERVENCION":
+    st.warning(f"Semáforo (victimización ≥ mensual): {lvl} — {msg}")
+elif lvl == "ATENCION":
+    st.info(f"Semáforo (victimización ≥ mensual): {lvl} — {msg}")
+else:
+    st.success(f"Semáforo (victimización ≥ mensual): {lvl} — {msg}")
 
-# Show flags + missing explicitly
-with st.expander("Detalles: denominadores + missing + banderas 5/10/20", expanded=True):
+# -----------------------------
+# C) Distribución riesgo estudiante
+# -----------------------------
+st.divider()
+st.subheader("Distribución de riesgo (por estudiante)")
+risk_counts = view["risk_group"].value_counts().reindex(["ALTO", "MEDIO", "BAJO", "SIN_DATOS"], fill_value=0)
+st.bar_chart(risk_counts)
+
+# -----------------------------
+# D) Detalles: denominadores + missing + banderas
+# -----------------------------
+with st.expander("Detalles (denominadores, missing, banderas 5/10/20)", expanded=False):
     cols = st.columns(2)
 
     def metric_block(title: str, stats: dict):
         pct = stats["pct"]
-        flag = threshold_flag(pct)
         st.markdown(f"**{title}**")
         st.write({
             "pct": pct,
             "n_with_data": stats["n_with_data"],
             "n_missing": stats["n_missing"],
             "missing_pct": stats["missing_pct"],
-            "threshold_flag": flag,
+            "threshold_flag": threshold_flag(pct),
         })
 
     with cols[0]:
-        metric_block("Victimización ≥ mensual", vict)
-        metric_block("Cyberbullying ≥ mensual", _safe_bool_rate(view["cyber_freq"]))
-        metric_block("Persistencia victimización (≥ semanal)", _safe_bool_rate(view["victim_persist"]))
-        metric_block("Persistencia cyber (≥ semanal)", _safe_bool_rate(view["cyber_persist"]))
+        metric_block("Victimización frecuente (≥ mensual)", vict)
+        metric_block("Cyberbullying frecuente (≥ mensual)", cybr)
+        metric_block("Persistencia (victimización ≥ semanal)", _safe_bool_rate(view["victim_persist"]))
+        metric_block("Persistencia (cyber ≥ semanal)", _safe_bool_rate(view["cyber_persist"]))
 
     with cols[1]:
-        metric_block("Persistencia cualquiera (victim o cyber)", _safe_bool_rate(view["any_persist"]))
-        metric_block("Silencio institucional (strict)", _safe_bool_rate(view["silence_flag_strict"]))
+        metric_block("Persistencia (cualquiera ≥ semanal)", pers)
+        metric_block("Silencio institucional (strict)", sil)
         st.markdown("**Silencio institucional (missing confianza)**")
         st.write(_safe_bool_rate(view["silence_flag_missing"]))
 
+# -----------------------------
+# E) Subgrupos mínimos (sin ML)
+# -----------------------------
 st.divider()
-st.subheader("Distribución de niveles de riesgo (estudiante)")
-st.bar_chart(view["risk_group"].value_counts())
-
-st.divider()
-st.subheader("Subgrupos mínimos (sin ML)")
+st.subheader("Subgrupos mínimos (sin ML): señales concentradas")
 
 if demo_view.empty:
     st.info("No hay demografía disponible (edad/grado/género) para esta selección.")
 else:
-    colA, colB, colC = st.columns(3)
+    colA, colB = st.columns(2)
 
     with colA:
-        st.markdown("**Género × Victimización ≥ mensual**")
+        st.markdown("### Género × Victimización (≥ mensual)")
         if "genero" in demo_view.columns:
             t = subgroup_prevalence(view, demo_view, "victim_freq", "genero")
-            if t.empty:
-                st.write("Sin datos.")
-            else:
-                st.dataframe(t, use_container_width=True)
+            st.dataframe(t if not t.empty else pd.DataFrame(), use_container_width=True)
+
+        st.markdown("### Género × Cyberbullying (≥ mensual)")
+        if "genero" in demo_view.columns:
+            t = subgroup_prevalence(view, demo_view, "cyber_freq", "genero")
+            st.dataframe(t if not t.empty else pd.DataFrame(), use_container_width=True)
 
     with colB:
-        st.markdown("**Edad × Cyberbullying ≥ mensual**")
-        if "edad" in demo_view.columns:
-            demo_age = demo_view.copy()
-            demo_age["edad_bucket"] = demo_age["edad"].astype("Int64").astype(str)
-            t = subgroup_prevalence(view, demo_age, "cyber_freq", "edad_bucket")
-            if t.empty:
-                st.write("Sin datos.")
-            else:
-                st.dataframe(t.head(12), use_container_width=True)
-
-    with colC:
-        st.markdown("**Grado × Victimización ≥ mensual**")
+        st.markdown("### Grado × Victimización (≥ mensual)")
         if "grado" in demo_view.columns:
-            demo_grade = demo_view.copy()
-            demo_grade["grado_bucket"] = demo_grade["grado"]
-            t = subgroup_prevalence(view, demo_grade, "victim_freq", "grado_bucket")
-            if t.empty:
-                st.write("Sin datos.")
-            else:
-                st.dataframe(t.head(13), use_container_width=True)
+            dg = demo_view.copy()
+            dg["grado_bucket"] = dg["grado"]
+            t = subgroup_prevalence(view, dg, "victim_freq", "grado_bucket")
+            st.dataframe(t if not t.empty else pd.DataFrame(), use_container_width=True)
 
+        st.markdown("### Grado × Cyberbullying (≥ mensual)")
+        if "grado" in demo_view.columns:
+            dg = demo_view.copy()
+            dg["grado_bucket"] = dg["grado"]
+            t = subgroup_prevalence(view, dg, "cyber_freq", "grado_bucket")
+            st.dataframe(t if not t.empty else pd.DataFrame(), use_container_width=True)
+
+# -----------------------------
+# F) 40 charts (use selected_df for charts; filter by school)
+# -----------------------------
 st.divider()
-
-# ---- 40 charts (use selected_df for charts; filter by school)
 selected_view = selected_df if school == "(Todas)" else selected_df[selected_df["school_name"] == school].copy()
 render_40_question_charts(selected_view, demo_view, max_questions=40)
 
+# -----------------------------
+# G) Informe IA
+# -----------------------------
 st.divider()
 st.subheader("Informe interpretativo (IA)")
-
 if st.button("Generar informe en lenguaje humano"):
     with st.spinner("Generando informe..."):
         summary = build_school_summary(view, demo_view)
         report = generate_llm_report(summary)
         st.markdown(report)
 
+# -----------------------------
+# Debug
+# -----------------------------
 with st.expander("Debug (recomendado ahora)"):
     st.write("Rows answer_level:", len(answer_level))
     st.write("Rows selected_df:", len(selected_df))
