@@ -409,11 +409,29 @@ def compute_student_metrics(answer_level_df: pd.DataFrame) -> pd.DataFrame:
     base["victim_persist"] = np.where(base["victim_answered"], base["victim_max"] >= VERY_HIGH_FREQ, np.nan)
     base["cyber_persist"]  = np.where(base["cyber_answered"],  base["cyber_max"]  >= VERY_HIGH_FREQ, np.nan)
 
-    base["any_persist"] = np.where(
-        (base["victim_answered"] | base["cyber_answered"]),
-        (pd.Series(base["victim_persist"]).fillna(False) | pd.Series(base["cyber_persist"]).fillna(False)),
-        np.nan
-    )
+    victim_persist_bool = (
+    base["victim_persist"]
+    .fillna(False)
+    .astype(bool)
+)
+
+cyber_persist_bool = (
+    base["cyber_persist"]
+    .fillna(False)
+    .astype(bool)
+)
+
+answered_any = (
+    base["victim_answered"].fillna(False).astype(bool) |
+    base["cyber_answered"].fillna(False).astype(bool)
+)
+
+base["any_persist"] = np.where(
+    answered_any,
+    (victim_persist_bool | cyber_persist_bool),
+    np.nan
+)
+
 
     base["silence_flag_strict"] = np.where(
         (base["victim_freq"] == True) & (base["trust_answered"] == True) & (base["trust_adult_max"] == 0),
@@ -845,3 +863,4 @@ with st.expander("Debug (recomendado ahora)"):
     st.dataframe(answer_level[["question_id", "question_text"]].drop_duplicates().head(30), use_container_width=True)
     st.write("Constructs config (victim/cyber/trust) — recomendado completar con question_id:")
     st.write(CONSTRUCTS)
+
