@@ -433,29 +433,29 @@ base["any_persist"] = np.where(
 )
 
 
-    base["silence_flag_strict"] = np.where(
-        (base["victim_freq"] == True) & (base["trust_answered"] == True) & (base["trust_adult_max"] == 0),
-        True,
-        np.where((base["victim_freq"] == True) & (base["trust_answered"] == True), False, np.nan)
-    )
+base["silence_flag_strict"] = np.where(
+    (base["victim_freq"] == True) & (base["trust_answered"] == True) & (base["trust_adult_max"] == 0),
+    True,
+     np.where((base["victim_freq"] == True) & (base["trust_answered"] == True), False, np.nan)
+)
 
-    base["silence_flag_missing"] = np.where(
-        (base["victim_freq"] == True) & (base["trust_answered"] == False),
-        True,
-        np.where((base["victim_freq"] == True), False, np.nan)
-    )
+base["silence_flag_missing"] = np.where(
+    (base["victim_freq"] == True) & (base["trust_answered"] == False),
+    True,
+    np.where((base["victim_freq"] == True), False, np.nan)
+)
 
-    answered_any = (base["victim_answered"].fillna(False) | base["cyber_answered"].fillna(False)).astype(bool)
-    high = (pd.Series(base["victim_persist"]).fillna(False) | pd.Series(base["cyber_persist"]).fillna(False)).astype(bool)
-    med  = (pd.Series(base["victim_freq"]).fillna(False)   | pd.Series(base["cyber_freq"]).fillna(False)).astype(bool)
+answered_any = (base["victim_answered"].fillna(False) | base["cyber_answered"].fillna(False)).astype(bool)
+high = (pd.Series(base["victim_persist"]).fillna(False) | pd.Series(base["cyber_persist"]).fillna(False)).astype(bool)
+med  = (pd.Series(base["victim_freq"]).fillna(False)   | pd.Series(base["cyber_freq"]).fillna(False)).astype(bool)
 
-    base["risk_group"] = np.select(
-        [answered_any & high, answered_any & (~high) & med, answered_any & (~high) & (~med)],
-        ["ALTO", "MEDIO", "BAJO"],
-        default="SIN_DATOS"
-    )
+base["risk_group"] = np.select(
+    [answered_any & high, answered_any & (~high) & med, answered_any & (~high) & (~med)],
+    ["ALTO", "MEDIO", "BAJO"],
+    default="SIN_DATOS"
+)
 
-    return base
+return base
 
 # -------------------------------------------------
 # Demografía: desde opciones seleccionadas (selected_df)
@@ -863,4 +863,5 @@ with st.expander("Debug (recomendado ahora)"):
     st.dataframe(answer_level[["question_id", "question_text"]].drop_duplicates().head(30), use_container_width=True)
     st.write("Constructs config (victim/cyber/trust) — recomendado completar con question_id:")
     st.write(CONSTRUCTS)
+
 
