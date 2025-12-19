@@ -7,6 +7,12 @@
 # - Adds “semaforo” (5/10/20) based on victimización frecuente
 # - Adds explicit caution about subreporte + “silencio institucional”
 # - Adds subgroup blocks (género/grado × victim/cyber) with correct denominators
+#
+# UPDATE (requested):
+# - If URL includes school_id + analysis_dt:
+#   - Load ONLY survey_responses for that school and exact analysis_requested_dt == analysis_dt
+#   - Load ONLY related question_answers / answer_selected_options / question_options / questions / schools
+#   - Chunk `.in_()` requests to avoid PostgREST 400 Bad Request due to too-long querystrings
 
 import os
 import numpy as np
@@ -31,27 +37,6 @@ if not SUPABASE_URL or not SUPABASE_KEY:
     st.stop()
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-# -------------------------------------------------
-# NUEVO (MINIMO): leer parámetros desde URL
-# -------------------------------------------------
-def _get_query_params():
-    # Compatible con versiones nuevas y antiguas de Streamlit
-    try:
-        qp = st.query_params
-        return dict(qp)
-    except Exception:
-        try:
-            return st.experimental_get_query_params()
-        except Exception:
-            return {}
-
-qp = _get_query_params()
-REQ_SCHOOL_ID = (qp.get("school_id", [None])[0] if isinstance(qp.get("school_id"), list) else qp.get("school_id"))
-REQ_ANALYSIS_DT = (qp.get("analysis_dt", [None])[0] if isinstance(qp.get("analysis_dt"), list) else qp.get("analysis_dt"))
-
-REQ_SCHOOL_ID = str(REQ_SCHOOL_ID).strip() if REQ_SCHOOL_ID else None
-REQ_ANALYSIS_DT = str(REQ_ANALYSIS_DT).strip() if REQ_ANALYSIS_DT else None
 
 # -------------------------------------------------
 # IDs de preguntas demográficas (según tu BD)
@@ -138,101 +123,6 @@ Entrega en español, con estructura:
 DATOS AGREGADOS:
 {summary}
 """.strip()
-
-# -------------------------------------------------
-# Supabase pagination helpers
-# -------------------------------------------------
-@st.cache_data(ttl=300)
-def _fetch_all(table: str, batch: int = 1000) -> pd.DataFrame:
-    rows = []
-    start = 0
-    while True:
-        data = (
-            supabase.table(table)
-            .select("*")
-            .range(start, start + batch - 1)
-            .execute()
-            .data
-        )
-        if not data:
-            break
-        rows.extend(data)
-        if len(data) < batch:
-            break
-        start += batch
-    return pd.DataFrame(rows)
-
-# -------------------------------------------------
-# ✅ CAMBIO MINIMO: load_tables filtra si vienen params
-# -------------------------------------------------
-@st.cache_data(ttl=300)
-def load_tables():
-    # Si no viene filtro, comportamiento original
-    if not REQ_SCHOOL_ID or not REQ_ANALYSIS_DT:
-        return (
-            _fetch_all("survey_responses"),
-            _fetch_all("question_answers"),
-            _fetch_all("answer_selected_options"),
-            _fetch_all("question_options"),
-            _fetch_all("questions"),
-            _fetch_all("schools"),
-        )
-
-    # 1) Traer solo survey_responses de esa escuela y de ese analysis_dt (y submitted)
-    resp_rows = (
-        supabase.table("survey_responses")
-        .select("*")
-        .eq("school_id", REQ_SCHOOL_ID)
-        .eq("analysis_requested_dt", REQ_ANALYSIS_DT)
-        .eq("status", "submitted")
-        .execute()
-        .data
-    )
-    responses = pd.DataFrame(resp_rows or [])
-
-    if responses.empty:
-        # devolvemos vacíos consistentes; el resto del código mostrará warning
-        return (
-            responses,
-            pd.DataFrame(),
-            pd.DataFrame(),
-            _fetch_all("question_options"),
-            _fetch_all("questions"),
-            _fetch_all("schools"),
-        )
-
-    response_ids = responses["id"].astype(str).tolist()
-
-    # 2) Traer answers solo para esos survey_response_id
-    ans_rows = (
-        supabase.table("question_answers")
-        .select("*")
-        .in_("survey_response_id", response_ids)
-        .execute()
-        .data
-    )
-    answers = pd.DataFrame(ans_rows or [])
-
-    # 3) Traer selected options solo para esos question_answer_id
-    if answers.empty or "id" not in answers.columns:
-        aso = pd.DataFrame()
-    else:
-        answer_ids = answers["id"].astype(str).tolist()
-        aso_rows = (
-            supabase.table("answer_selected_options")
-            .select("*")
-            .in_("question_answer_id", answer_ids)
-            .execute()
-            .data
-        )
-        aso = pd.DataFrame(aso_rows or [])
-
-    # Catálogos (pueden quedarse completos)
-    qopts = _fetch_all("question_options")
-    questions = _fetch_all("questions")
-    schools = _fetch_all("schools")
-
-    return (responses, answers, aso, qopts, questions, schools)
 
 # -------------------------------------------------
 # Helpers: normalización robusta de columnas
@@ -333,6 +223,118 @@ def filter_submitted_responses(responses: pd.DataFrame) -> pd.DataFrame:
     if "status" not in responses.columns:
         return responses
     return responses[responses["status"].astype(str).str.lower().eq("submitted")].copy()
+
+# -------------------------------------------------
+# Supabase fetch helpers (chunked in_ to avoid 400 Bad Request)
+# -------------------------------------------------
+def _fetch_in_chunks(table: str, col: str, ids: list, select: str = "*", chunk_size: int = 200) -> list[dict]:
+    if not ids:
+        return []
+    out = []
+    for i in range(0, len(ids), chunk_size):
+        chunk = ids[i:i + chunk_size]
+        rows = (
+            supabase.table(table)
+            .select(select)
+            .in_(col, chunk)
+            .execute()
+            .data
+        )
+        if rows:
+            out.extend(rows)
+    return out
+
+# -------------------------------------------------
+# Load tables (filtered when school_id + analysis_dt are present)
+# -------------------------------------------------
+@st.cache_data(ttl=300)
+def load_tables_filtered(school_id: str, analysis_dt: str):
+    # 1) survey_responses for this school and exact analysis_requested_dt
+    responses_rows = (
+        supabase.table("survey_responses")
+        .select("*")
+        .eq("school_id", school_id)
+        .eq("analysis_requested_dt", analysis_dt)
+        .execute()
+        .data
+    )
+    responses = pd.DataFrame(responses_rows or [])
+    if responses.empty:
+        # return empty frames in same order
+        return (
+            pd.DataFrame(), pd.DataFrame(), pd.DataFrame(),
+            pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        )
+
+    # 2) question_answers for those survey_response_id
+    resp_ids = responses["id"].dropna().tolist() if "id" in responses.columns else []
+    answers_rows = _fetch_in_chunks("question_answers", "survey_response_id", resp_ids, select="*")
+    answers = pd.DataFrame(answers_rows or [])
+    if answers.empty:
+        return (
+            responses, pd.DataFrame(), pd.DataFrame(),
+            pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        )
+
+    # 3) answer_selected_options for those question_answer_id (CHUNKED)
+    ans_ids = answers["id"].dropna().tolist() if "id" in answers.columns else []
+    aso_rows = _fetch_in_chunks("answer_selected_options", "question_answer_id", ans_ids, select="*")
+    aso = pd.DataFrame(aso_rows or [])
+
+    # 4) question_options only for option_ids present
+    option_ids = aso["option_id"].dropna().tolist() if (not aso.empty and "option_id" in aso.columns) else []
+    qopts_rows = _fetch_in_chunks("question_options", "id", option_ids, select="*")
+    qopts = pd.DataFrame(qopts_rows or [])
+
+    # 5) questions only for question_ids present in answers
+    qids = answers["question_id"].dropna().tolist() if "question_id" in answers.columns else []
+    questions_rows = _fetch_in_chunks("questions", "id", qids, select="*")
+    questions = pd.DataFrame(questions_rows or [])
+
+    # 6) schools only this school
+    schools_rows = (
+        supabase.table("schools")
+        .select("*")
+        .eq("id", school_id)
+        .execute()
+        .data
+    )
+    schools = pd.DataFrame(schools_rows or [])
+
+    return responses, answers, aso, qopts, questions, schools
+
+
+@st.cache_data(ttl=300)
+def _fetch_all(table: str, batch: int = 1000) -> pd.DataFrame:
+    rows = []
+    start = 0
+    while True:
+        data = (
+            supabase.table(table)
+            .select("*")
+            .range(start, start + batch - 1)
+            .execute()
+            .data
+        )
+        if not data:
+            break
+        rows.extend(data)
+        if len(data) < batch:
+            break
+        start += batch
+    return pd.DataFrame(rows)
+
+
+@st.cache_data(ttl=300)
+def load_tables_unfiltered():
+    return (
+        _fetch_all("survey_responses"),
+        _fetch_all("question_answers"),
+        _fetch_all("answer_selected_options"),
+        _fetch_all("question_options"),
+        _fetch_all("questions"),
+        _fetch_all("schools"),
+    )
 
 # -------------------------------------------------
 # Build answer-level DF (NO inner join with ASO)
@@ -772,7 +774,15 @@ def _groq_report(summary: dict) -> str:
 # -------------------------------------------------
 st.title("Dashboard de Convivencia Escolar — Indicadores Científicos")
 
-responses, answers, aso, qopts, questions, schools = load_tables()
+# Read query params (school_id, analysis_dt)
+qp = st.query_params
+qp_school_id = (qp.get("school_id") or "").strip()
+qp_analysis_dt = (qp.get("analysis_dt") or "").strip()
+
+if qp_school_id and qp_analysis_dt:
+    responses, answers, aso, qopts, questions, schools = load_tables_filtered(qp_school_id, qp_analysis_dt)
+else:
+    responses, answers, aso, qopts, questions, schools = load_tables_unfiltered()
 
 answer_level = build_answer_level_df(responses, answers, aso, qopts, questions, schools)
 if answer_level.empty:
@@ -786,8 +796,15 @@ if student.empty:
     st.warning("No se pudieron construir métricas de estudiantes.")
     st.stop()
 
-school_list = sorted(student["school_name"].dropna().unique().tolist())
-school = st.sidebar.selectbox("Escuela", ["(Todas)"] + school_list)
+# If filtered by URL, lock the view to that school (no '(Todas)')
+if qp_school_id and qp_analysis_dt:
+    school_list = sorted(student["school_name"].dropna().unique().tolist())
+    school = school_list[0] if school_list else "(Todas)"
+    st.sidebar.info(f"Filtrado por school_id={qp_school_id} y analysis_dt={qp_analysis_dt}")
+else:
+    school_list = sorted(student["school_name"].dropna().unique().tolist())
+    school = st.sidebar.selectbox("Escuela", ["(Todas)"] + school_list)
+
 view = student if school == "(Todas)" else student[student["school_name"] == school]
 
 demo_df = extract_demographics_from_options(selected_df)
@@ -930,6 +947,13 @@ if st.button("Generar informe en lenguaje humano"):
 # Debug
 # -----------------------------
 with st.expander("Debug (recomendado ahora)"):
+    st.write("Query params:", dict(st.query_params))
+    st.write("Rows responses:", len(responses))
+    st.write("Rows answers:", len(answers))
+    st.write("Rows aso:", len(aso))
+    st.write("Rows qopts:", len(qopts))
+    st.write("Rows questions:", len(questions))
+    st.write("Rows schools:", len(schools))
     st.write("Rows answer_level:", len(answer_level))
     st.write("Rows selected_df:", len(selected_df))
     st.write("Rows student:", len(student))
