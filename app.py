@@ -33,6 +33,27 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # -------------------------------------------------
+# NUEVO (MINIMO): leer parámetros desde URL
+# -------------------------------------------------
+def _get_query_params():
+    # Compatible con versiones nuevas y antiguas de Streamlit
+    try:
+        qp = st.query_params
+        return dict(qp)
+    except Exception:
+        try:
+            return st.experimental_get_query_params()
+        except Exception:
+            return {}
+
+qp = _get_query_params()
+REQ_SCHOOL_ID = (qp.get("school_id", [None])[0] if isinstance(qp.get("school_id"), list) else qp.get("school_id"))
+REQ_ANALYSIS_DT = (qp.get("analysis_dt", [None])[0] if isinstance(qp.get("analysis_dt"), list) else qp.get("analysis_dt"))
+
+REQ_SCHOOL_ID = str(REQ_SCHOOL_ID).strip() if REQ_SCHOOL_ID else None
+REQ_ANALYSIS_DT = str(REQ_ANALYSIS_DT).strip() if REQ_ANALYSIS_DT else None
+
+# -------------------------------------------------
 # IDs de preguntas demográficas (según tu BD)
 # -------------------------------------------------
 QID_EDAD = "1b5f4f28-8f41-4ed7-9bfa-07d927b2d1b4"
@@ -141,17 +162,77 @@ def _fetch_all(table: str, batch: int = 1000) -> pd.DataFrame:
         start += batch
     return pd.DataFrame(rows)
 
-
+# -------------------------------------------------
+# ✅ CAMBIO MINIMO: load_tables filtra si vienen params
+# -------------------------------------------------
 @st.cache_data(ttl=300)
 def load_tables():
-    return (
-        _fetch_all("survey_responses"),
-        _fetch_all("question_answers"),
-        _fetch_all("answer_selected_options"),
-        _fetch_all("question_options"),
-        _fetch_all("questions"),
-        _fetch_all("schools"),
+    # Si no viene filtro, comportamiento original
+    if not REQ_SCHOOL_ID or not REQ_ANALYSIS_DT:
+        return (
+            _fetch_all("survey_responses"),
+            _fetch_all("question_answers"),
+            _fetch_all("answer_selected_options"),
+            _fetch_all("question_options"),
+            _fetch_all("questions"),
+            _fetch_all("schools"),
+        )
+
+    # 1) Traer solo survey_responses de esa escuela y de ese analysis_dt (y submitted)
+    resp_rows = (
+        supabase.table("survey_responses")
+        .select("*")
+        .eq("school_id", REQ_SCHOOL_ID)
+        .eq("analysis_requested_dt", REQ_ANALYSIS_DT)
+        .eq("status", "submitted")
+        .execute()
+        .data
     )
+    responses = pd.DataFrame(resp_rows or [])
+
+    if responses.empty:
+        # devolvemos vacíos consistentes; el resto del código mostrará warning
+        return (
+            responses,
+            pd.DataFrame(),
+            pd.DataFrame(),
+            _fetch_all("question_options"),
+            _fetch_all("questions"),
+            _fetch_all("schools"),
+        )
+
+    response_ids = responses["id"].astype(str).tolist()
+
+    # 2) Traer answers solo para esos survey_response_id
+    ans_rows = (
+        supabase.table("question_answers")
+        .select("*")
+        .in_("survey_response_id", response_ids)
+        .execute()
+        .data
+    )
+    answers = pd.DataFrame(ans_rows or [])
+
+    # 3) Traer selected options solo para esos question_answer_id
+    if answers.empty or "id" not in answers.columns:
+        aso = pd.DataFrame()
+    else:
+        answer_ids = answers["id"].astype(str).tolist()
+        aso_rows = (
+            supabase.table("answer_selected_options")
+            .select("*")
+            .in_("question_answer_id", answer_ids)
+            .execute()
+            .data
+        )
+        aso = pd.DataFrame(aso_rows or [])
+
+    # Catálogos (pueden quedarse completos)
+    qopts = _fetch_all("question_options")
+    questions = _fetch_all("questions")
+    schools = _fetch_all("schools")
+
+    return (responses, answers, aso, qopts, questions, schools)
 
 # -------------------------------------------------
 # Helpers: normalización robusta de columnas
