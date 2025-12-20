@@ -106,7 +106,14 @@ Eres un especialista en convivencia escolar y prevención del bullying.
 Tu tarea: redactar un informe claro, educativo, ético y no alarmista para un equipo directivo escolar,
 basado ÚNICAMENTE en los datos agregados siguientes.
 
+Tamaño de muestra:
+- Encuestas submitted totales: {n_encuestas_submitted_total}
+- Estudiantes con datos válidos para indicadores sensibles: {n_estudiantes_con_datos_relevantes}
+
 Reglas:
+- Cuando describas la encuesta, usa SIEMPRE el número de encuestas submitted totales.
+- Cuando describas un indicador específico, usa su n_with_data correspondiente.
+- Nunca infieras el tamaño muestral a partir de n_with_data.
 - NO identifiques ni infieras identidades de estudiantes.
 - Evita juicios morales; usa lenguaje cuidadoso, centrado en prevención y apoyo.
 - Señala limitaciones: muestra que son datos de una encuesta y no un “diagnóstico”.
@@ -695,6 +702,8 @@ def build_school_summary(student_view: pd.DataFrame, demo_view: pd.DataFrame) ->
 
     summary = {
         "n_estudiantes_submitted": n,
+        "n_encuestas_submitted_total": int(len(responses)),
+        "n_estudiantes_con_datos_relevantes": int(len(student_view)),
         "victimizacion_mensual": {**victim_stats, "threshold_flag": threshold_flag(victim_stats["pct"])},
         "cyberbullying_mensual": {**cyber_stats, "threshold_flag": threshold_flag(cyber_stats["pct"])},
         "persistencia_victimizacion_semanal": {**victim_persist_stats, "threshold_flag": threshold_flag(victim_persist_stats["pct"])},
@@ -962,3 +971,4 @@ with st.expander("Debug (recomendado ahora)"):
     st.dataframe(answer_level[["question_id", "question_text"]].drop_duplicates().head(30), use_container_width=True)
     st.write("Constructs config (victim/cyber/trust) — recomendado completar con question_id:")
     st.write(CONSTRUCTS)
+
