@@ -122,6 +122,8 @@ Reglas:
 - Evita juicios morales; usa lenguaje cuidadoso, centrado en prevención y apoyo.
 - Señala limitaciones: muestra que son datos de una encuesta y no un “diagnóstico”.
 - Si hay valores faltantes (missing), explícitalo y evita conclusiones optimistas por falta de datos.
+- Senala clase con mas altos indices de bullying
+- En que grupo femenino, masculino, no responde u otro existe mas violencia escolar
 
 Entrega en español, con estructura:
 
@@ -989,3 +991,4 @@ with st.expander("Debug (recomendado ahora)"):
     st.dataframe(answer_level[["question_id", "question_text"]].drop_duplicates().head(30), use_container_width=True)
     st.write("Constructs config (victim/cyber/trust) — recomendado completar con question_id:")
     st.write(CONSTRUCTS)
+
