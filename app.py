@@ -13,6 +13,10 @@
 #   - Load ONLY survey_responses for that school and exact analysis_requested_dt == analysis_dt
 #   - Load ONLY related question_answers / answer_selected_options / question_options / questions / schools
 #   - Chunk `.in_()` requests to avoid PostgREST 400 Bad Request due to too-long querystrings
+#
+# FIX (this round):
+# - Fix IndentationError in _groq_report (prompt + requests.post properly indented)
+# - Ensure LLM prompt receives required variables (n_encuestas_submitted_total, n_estudiantes_con_datos_relevantes)
 
 import os
 import numpy as np
@@ -702,7 +706,7 @@ def build_school_summary(student_view: pd.DataFrame, demo_view: pd.DataFrame) ->
 
     summary = {
         "n_estudiantes_submitted": n,
-        "n_encuestas_submitted_total": int(len(responses)),
+        "n_encuestas_submitted_total": int(len(responses)) if "responses" in globals() else int(n),
         "n_estudiantes_con_datos_relevantes": int(len(student_view)),
         "victimizacion_mensual": {**victim_stats, "threshold_flag": threshold_flag(victim_stats["pct"])},
         "cyberbullying_mensual": {**cyber_stats, "threshold_flag": threshold_flag(cyber_stats["pct"])},
@@ -757,16 +761,25 @@ def _groq_report(summary: dict) -> str:
     if not api_key:
         return "Falta la API Key de Groq."
 
-prompt = LLM_PROMPT_ES.format(
-    summary=summary,
-    n_encuestas_submitted_total=summary.get("n_encuestas_submitted_total", summary.get("n_estudiantes_submitted", 0)),
-    n_estudiantes_con_datos_relevantes=summary.get("n_estudiantes_con_datos_relevantes", summary.get("n_estudiantes_submitted", 0)),
-)
-
+    # IMPORTANT: Prompt must include required formatting variables
+    prompt = LLM_PROMPT_ES.format(
+        summary=summary,
+        n_encuestas_submitted_total=summary.get(
+            "n_encuestas_submitted_total",
+            summary.get("n_estudiantes_submitted", 0),
+        ),
+        n_estudiantes_con_datos_relevantes=summary.get(
+            "n_estudiantes_con_datos_relevantes",
+            summary.get("n_estudiantes_submitted", 0),
+        ),
+    )
 
     r = requests.post(
         "https://api.groq.com/openai/v1/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
         json={
             "model": model,
             "messages": [
@@ -976,5 +989,3 @@ with st.expander("Debug (recomendado ahora)"):
     st.dataframe(answer_level[["question_id", "question_text"]].drop_duplicates().head(30), use_container_width=True)
     st.write("Constructs config (victim/cyber/trust) — recomendado completar con question_id:")
     st.write(CONSTRUCTS)
-
-
