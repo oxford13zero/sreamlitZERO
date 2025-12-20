@@ -757,7 +757,12 @@ def _groq_report(summary: dict) -> str:
     if not api_key:
         return "Falta la API Key de Groq."
 
-    prompt = LLM_PROMPT_ES.format(summary=summary)
+prompt = LLM_PROMPT_ES.format(
+    summary=summary,
+    n_encuestas_submitted_total=summary.get("n_encuestas_submitted_total", summary.get("n_estudiantes_submitted", 0)),
+    n_estudiantes_con_datos_relevantes=summary.get("n_estudiantes_con_datos_relevantes", summary.get("n_estudiantes_submitted", 0)),
+)
+
 
     r = requests.post(
         "https://api.groq.com/openai/v1/chat/completions",
@@ -971,4 +976,5 @@ with st.expander("Debug (recomendado ahora)"):
     st.dataframe(answer_level[["question_id", "question_text"]].drop_duplicates().head(30), use_container_width=True)
     st.write("Constructs config (victim/cyber/trust) — recomendado completar con question_id:")
     st.write(CONSTRUCTS)
+
 
