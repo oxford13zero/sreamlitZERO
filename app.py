@@ -105,7 +105,9 @@ def risk_level_message(pct: float) -> tuple[str, str]:
 # LLM Prompt (ES)
 # -------------------------------------------------
 LLM_PROMPT_ES = """
-Eres un especialista en convivencia escolar y prevención del bullying.
+Eres un especialista en convivencia escolar y prevención del bullying con 30 años de experiencia, tanto en Chile
+como en EEUU. Ademas, eres un experto en analisis estadistico y experto en tomar encuestas estudiantiles para analizar
+ambiente escolar.
 
 Tu tarea: redactar un informe claro, educativo, ético y no alarmista para un equipo directivo escolar,
 basado ÚNICAMENTE en los datos agregados siguientes.
@@ -991,4 +993,5 @@ with st.expander("Debug (recomendado ahora)"):
     st.dataframe(answer_level[["question_id", "question_text"]].drop_duplicates().head(30), use_container_width=True)
     st.write("Constructs config (victim/cyber/trust) — recomendado completar con question_id:")
     st.write(CONSTRUCTS)
+
 
