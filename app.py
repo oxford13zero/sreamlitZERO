@@ -117,6 +117,7 @@ Tamaño de muestra:
 - Estudiantes con datos válidos para indicadores sensibles: {n_estudiantes_con_datos_relevantes}
 
 Reglas:
+Reglas:
 - Cuando describas la encuesta, usa SIEMPRE el número de encuestas submitted totales.
 - Cuando describas un indicador específico, usa su n_with_data correspondiente.
 - Nunca infieras el tamaño muestral a partir de n_with_data.
@@ -126,6 +127,10 @@ Reglas:
 - Si hay valores faltantes (missing), explícitalo y evita conclusiones optimistas por falta de datos.
 - Senala clase con mas altos indices de bullying
 - En que grupo femenino, masculino, no responde u otro existe mas violencia escolar
+- Detecta donde se concentran los grupos de estudiantes con mas agresores, y con mas victimas
+- Detecta el o los lugares donde se producen mas agresiones y listalos desde los mas inseguros hasta los mas seguros.
+- Indica en quien confian mas los estudiantes al momento de reportar bullying, los padres? profesores? otros estudiantes? etc
+
 
 Entrega en español, con estructura:
 
@@ -993,5 +998,6 @@ with st.expander("Debug (recomendado ahora)"):
     st.dataframe(answer_level[["question_id", "question_text"]].drop_duplicates().head(30), use_container_width=True)
     st.write("Constructs config (victim/cyber/trust) — recomendado completar con question_id:")
     st.write(CONSTRUCTS)
+
 
 
