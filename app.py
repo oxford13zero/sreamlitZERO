@@ -429,17 +429,26 @@ def build_answer_level_df(responses, answers, aso, qopts, questions, schools) ->
     text_col = _pick_col(base, ["option_text", "text", "label"])
 
     base["question_text"] = base.get("question_text", "").fillna("")
+    # external_id (texto) para mapear preguntas del JSON ZERO-R
+    base["question_external_id"] = base.get("external_id")
+
     base["opt_code"] = base[code_col].astype(str) if code_col else ""
     base["opt_text"] = base[text_col].astype(str) if text_col else ""
 
     base["opt_code"] = base["opt_code"].replace({"nan": "", "None": ""}).fillna("")
     base["opt_text"] = base["opt_text"].replace({"nan": "", "None": ""}).fillna("")
 
-        # Score: primero intenta por texto (p.ej. "Nunca"), si no, por código (p.ej. "A", "2")
-    base["score"] = base["opt_text"].map(SCALE)
-    base.loc[base["score"].isna(), "score"] = base.loc[base["score"].isna(), "opt_code"].map(SCALE)
+    # Score: prioriza opt_code (0..3 o A..D) y luego fallback por texto
+    def _score_from_code_or_text(code: str, text: str):
+        c = (code or "").strip()
+        t = (text or "").strip()
+        if c in {"0", "1", "2", "3"}:
+            return float(int(c))
+        if c in {"A", "B", "C", "D"}:
+            return float({"A": 0, "B": 1, "C": 2, "D": 3}[c])
+        return SCALE.get(t)
 
-    # Si no hay selección (o texto vacío), dejar como missing (NA)
+    base["score"] = base.apply(lambda r: _score_from_code_or_text(r.get("opt_code"), r.get("opt_text")), axis=1)
     base.loc[base["opt_text"].astype(str).str.strip().eq("") & base["opt_code"].astype(str).str.strip().eq(""), "score"] = np.nan
     base["score"] = pd.to_numeric(base["score"], errors="coerce")
 
@@ -494,18 +503,21 @@ def compute_student_metrics(answer_level_df: pd.DataFrame) -> pd.DataFrame:
 
     d = answer_level_df.copy()
 
+    # Preferimos external_id (texto) si existe (ZERO-R)
+    qcol = "question_external_id" if "question_external_id" in d.columns else "question_id"
+
     if CONSTRUCTS["victim_qids"]:
-        is_victim = d["question_id"].isin(CONSTRUCTS["victim_qids"])
+        is_victim = d[qcol].isin(CONSTRUCTS["victim_qids"])
     else:
         is_victim = d["question_text"].str.contains(VICTIM_REGEX, case=False, na=False)
 
     if CONSTRUCTS["cyber_qids"]:
-        is_cyber = d["question_id"].isin(CONSTRUCTS["cyber_qids"])
+        is_cyber = d[qcol].isin(CONSTRUCTS["cyber_qids"])
     else:
         is_cyber = d["question_text"].str.contains(CYBER_REGEX, case=False, na=False)
 
     if CONSTRUCTS["trust_qids"]:
-        is_trust = d["question_id"].isin(CONSTRUCTS["trust_qids"])
+        is_trust = d[qcol].isin(CONSTRUCTS["trust_qids"])
     else:
         is_trust = d["question_text"].str.contains(TRUST_REGEX, case=False, na=False)
 
@@ -725,7 +737,7 @@ def render_40_question_charts(selected_df: pd.DataFrame, demo_df: pd.DataFrame, 
                 pivot[col] = 0
         pivot = pivot[["M", "F", "O", "N"]]
 
-        all_grades = pd.Index(range(1, 5), name="grado")
+        all_grades = pd.Index(range(6, 13), name="grado")
         pivot = pivot.reindex(all_grades, fill_value=0)
 
         st.markdown(f"### {qtext}")
