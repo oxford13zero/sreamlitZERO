@@ -45,24 +45,41 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 # -------------------------------------------------
 # IDs de preguntas demográficas (según tu BD)
 # -------------------------------------------------
-QID_EDAD = "1b5f4f28-8f41-4ed7-9bfa-07d927b2d1b4"
-QID_GRADO = "6b5b3cdd-5e6d-4c02-a6c4-63d7b3c52e30"
-QID_GENERO = "c0a89b93-2b39-4e4c-9f10-8f58dbf8d0c7"
-QID_TIEMPO = "7c5d8e66-1d8d-4f0c-8a4f-8a6b6b5c4c11"
+QID_EDAD = "zero_general_edad"
+QID_GRADO = "zero_general_curso"
+QID_GENERO = "zero_general_genero"
+QID_TIEMPO = "zero_general_tiempo"
 DEMOGRAPHIC_QIDS = {QID_EDAD, QID_GRADO, QID_GENERO, QID_TIEMPO}
 
 # -------------------------------------------------
 # Scoring scale (frequency-based) - para indicadores
 # -------------------------------------------------
 SCALE = {
+    # Frecuencia (0-3) — ZERO-R (últimas 8 semanas)
     "Nunca": 0,
+    "0": 0,
+    "1 o 2 veces": 1,
+    "1": 1,
+    "3 a 5 veces": 2,
+    "2": 2,
+    "Más de 5 veces": 3,
+    "Mas de 5 veces": 3,
+    "3": 3,
+
+    # Escala A-D (0-3) — items de liderazgo/ambiente/etc.
+    "A": 0,
+    "B": 1,
+    "C": 2,
+    "D": 3,
+
+    # Compatibilidad con encuestas previas (si quedan datos históricos)
     "No": 0,
-    "Sólo una vez": 1,
-    "Solo una vez": 1,
-    "A veces": 1,
-    "Varias veces al mes": 2,
     "Sí": 2,
     "Si": 2,
+    "Solo una vez": 1,
+    "Sólo una vez": 1,
+    "A veces": 1,
+    "Varias veces al mes": 2,
     "Casi cada semana": 3,
     "Casi cada día": 4,
     "Casi cada dia": 4,
@@ -418,8 +435,12 @@ def build_answer_level_df(responses, answers, aso, qopts, questions, schools) ->
     base["opt_code"] = base["opt_code"].replace({"nan": "", "None": ""}).fillna("")
     base["opt_text"] = base["opt_text"].replace({"nan": "", "None": ""}).fillna("")
 
+        # Score: primero intenta por texto (p.ej. "Nunca"), si no, por código (p.ej. "A", "2")
     base["score"] = base["opt_text"].map(SCALE)
-    base.loc[base["opt_text"].astype(str).str.strip().eq(""), "score"] = np.nan
+    base.loc[base["score"].isna(), "score"] = base.loc[base["score"].isna(), "opt_code"].map(SCALE)
+
+    # Si no hay selección (o texto vacío), dejar como missing (NA)
+    base.loc[base["opt_text"].astype(str).str.strip().eq("") & base["opt_code"].astype(str).str.strip().eq(""), "score"] = np.nan
     base["score"] = pd.to_numeric(base["score"], errors="coerce")
 
     if "survey_response_id" not in base.columns:
@@ -439,9 +460,25 @@ def build_selected_df(answer_level_df: pd.DataFrame) -> pd.DataFrame:
 # Construct configuration
 # -------------------------------------------------
 CONSTRUCTS = {
-    "victim_qids": [],
-    "cyber_qids": [],
-    "trust_qids": [],
+    # Basado en survey_001.json (ZERO-R Secundaria)
+    # Victimización (frecuencia 0-3, últimas 8 semanas)
+    "victim_qids": [
+        "zero_victim_rumores",
+        "zero_victim_excluir",
+        "zero_victim_fisica",
+        "zero_zonas_banos",
+        "zero_zonas_patios",
+        "zero_zonas_pasillos",
+    ],
+    # Cyberbullying / agresión en línea (frecuencia 0-3, últimas 8 semanas)
+    "cyber_qids": [
+        "zero_online_victim_humillar",
+        "zero_online_excluido",
+    ],
+    # Confianza / posibilidad de hablar con un adulto (profesor/a principal)
+    "trust_qids": [
+        "zero_liderazgo_hablar",
+    ],
 }
 
 VICTIM_REGEX = r"agredido|molestado|ignorado|golpe|amenaz|humill|insult|exclu|rechaz"
@@ -688,7 +725,7 @@ def render_40_question_charts(selected_df: pd.DataFrame, demo_df: pd.DataFrame, 
                 pivot[col] = 0
         pivot = pivot[["M", "F", "O", "N"]]
 
-        all_grades = pd.Index(range(1, 14), name="grado")
+        all_grades = pd.Index(range(1, 5), name="grado")
         pivot = pivot.reindex(all_grades, fill_value=0)
 
         st.markdown(f"### {qtext}")
@@ -998,6 +1035,5 @@ with st.expander("Debug (recomendado ahora)"):
     st.dataframe(answer_level[["question_id", "question_text"]].drop_duplicates().head(30), use_container_width=True)
     st.write("Constructs config (victim/cyber/trust) — recomendado completar con question_id:")
     st.write(CONSTRUCTS)
-
 
 
