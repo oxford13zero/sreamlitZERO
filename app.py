@@ -461,42 +461,23 @@ def build_answer_level_df(responses, answers, aso, qopts, questions, schools) ->
 # Build selected-options DF for charts
 # -------------------------------------------------
 def build_selected_df(answer_level_df: pd.DataFrame) -> pd.DataFrame:
+    """Return answer rows that have a selected option (single_choice).
+
+    Important: For analysis we standardize question_id to the *external_id*
+    (e.g., "zero_general_edad") when available, so that constructs and
+    demographics use stable identifiers across survey versions.
+    """
     if answer_level_df.empty:
         return pd.DataFrame()
-    return answer_level_df[answer_level_df["option_id"].notna()].copy()
 
-# -------------------------------------------------
-# Construct configuration
-# -------------------------------------------------
-CONSTRUCTS = {
-    # Basado en survey_001.json (ZERO-R Secundaria)
-    # Victimización (frecuencia 0-3, últimas 8 semanas)
-    "victim_qids": [
-        "zero_victim_rumores",
-        "zero_victim_excluir",
-        "zero_victim_fisica",
-        "zero_zonas_banos",
-        "zero_zonas_patios",
-        "zero_zonas_pasillos",
-    ],
-    # Cyberbullying / agresión en línea (frecuencia 0-3, últimas 8 semanas)
-    "cyber_qids": [
-        "zero_online_victim_humillar",
-        "zero_online_excluido",
-    ],
-    # Confianza / posibilidad de hablar con un adulto (profesor/a principal)
-    "trust_qids": [
-        "zero_liderazgo_hablar",
-    ],
-}
+    df = answer_level_df[answer_level_df["option_id"].notna()].copy()
 
-VICTIM_REGEX = r"agredido|molestado|ignorado|golpe|amenaz|humill|insult|exclu|rechaz"
-CYBER_REGEX  = r"internet|mensajer|mensaje|redes|whatsapp|tiktok|instagram|video|foto|online"
-TRUST_REGEX  = r"adultos|profesores|docentes|director|inspect|orientador|convivencia|encargad"
+    # Prefer stable external ids for analysis keys.
+    if "question_external_id" in df.columns:
+        df["question_id_uuid"] = df["question_id"]
+        df["question_id"] = df["question_external_id"].fillna(df["question_id"])
 
-# -------------------------------------------------
-# Student-level scientific indicators (robust to missing)
-# -------------------------------------------------
+    return df
 def compute_student_metrics(answer_level_df: pd.DataFrame) -> pd.DataFrame:
     if answer_level_df.empty:
         return pd.DataFrame()
@@ -1047,5 +1028,4 @@ with st.expander("Debug (recomendado ahora)"):
     st.dataframe(answer_level[["question_id", "question_text"]].drop_duplicates().head(30), use_container_width=True)
     st.write("Constructs config (victim/cyber/trust) — recomendado completar con question_id:")
     st.write(CONSTRUCTS)
-
 
