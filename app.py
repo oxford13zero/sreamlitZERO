@@ -19,6 +19,7 @@
 # - Ensure LLM prompt receives required variables (n_encuestas_submitted_total, n_estudiantes_con_datos_relevantes)
 
 import os
+import re
 import numpy as np
 import pandas as pd
 import streamlit as st
