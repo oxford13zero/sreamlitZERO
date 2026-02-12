@@ -485,29 +485,33 @@ def compute_student_metrics(answer_level_df: pd.DataFrame) -> pd.DataFrame:
 
     d = answer_level_df.copy()
 
-    # Preferimos external_id (texto) si existe (ZERO-R)
+    # Opción B (recomendada): NO usamos regex sobre textos.
+    # Clasificamos preguntas por su external_id (estable y controlado por tu SQL seed).
     qcol = "question_external_id" if "question_external_id" in d.columns else "question_id"
+    qseries = d[qcol].fillna("").astype(str)
 
-    victim_qids = [q for q in d[qcol].dropna().astype(str).unique().tolist() if re.search(VICTIM_REGEX, q)]
+    def _is_victim_external(q: str) -> bool:
+        # Victimización presencial + adulta + zonas + victimización online
+        return (
+            q.startswith("zero_victim_")
+            or q == "zero_adulto_trato"
+            or q.startswith("zero_zonas_")
+            or q.startswith("zero_online_victim_")
+            or q == "zero_online_excluido"
+            or q in {"zero_online_contenido_estado", "zero_online_responsable"}
+        )
 
-    if victim_qids:
-        is_victim = d[qcol].astype(str).isin(victim_qids)
-    else:
-        is_victim = d["question_text"].str.contains(VICTIM_REGEX, case=False, na=False)
+    def _is_cyber_external(q: str) -> bool:
+        # Cualquier item online (perpetración o victimización) lo tratamos como "cyber".
+        return q.startswith("zero_online_")
 
-    cyber_qids = [q for q in d[qcol].dropna().astype(str).unique().tolist() if re.search(CYBER_REGEX, q)]
+    def _is_trust_external(q: str) -> bool:
+        # Confianza / clima: liderazgo docente + normas + apoyo + rol del grupo.
+        return q.startswith("zero_liderazgo_") or q.startswith("zero_ambiente_")
 
-    if cyber_qids:
-        is_cyber = d[qcol].astype(str).isin(cyber_qids)
-    else:
-        is_cyber = d["question_text"].str.contains(CYBER_REGEX, case=False, na=False)
-
-    trust_qids = [q for q in d[qcol].dropna().astype(str).unique().tolist() if re.search(TRUST_REGEX, q)]
-
-    if trust_qids:
-        is_trust = d[qcol].astype(str).isin(trust_qids)
-    else:
-        is_trust = d["question_text"].str.contains(TRUST_REGEX, case=False, na=False)
+    is_victim = qseries.apply(_is_victim_external)
+    is_cyber = qseries.apply(_is_cyber_external)
+    is_trust = qseries.apply(_is_trust_external)
 
     d_v = d[is_victim][["survey_response_id", "school_name", "score"]].copy()
     d_c = d[is_cyber][["survey_response_id", "score"]].copy()
