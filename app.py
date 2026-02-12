@@ -487,18 +487,24 @@ def compute_student_metrics(answer_level_df: pd.DataFrame) -> pd.DataFrame:
     # Preferimos external_id (texto) si existe (ZERO-R)
     qcol = "question_external_id" if "question_external_id" in d.columns else "question_id"
 
-    if CONSTRUCTS["victim_qids"]:
-        is_victim = d[qcol].isin(CONSTRUCTS["victim_qids"])
+    victim_qids = [q for q in d[qcol].dropna().astype(str).unique().tolist() if re.search(VICTIM_REGEX, q)]
+
+    if victim_qids:
+        is_victim = d[qcol].astype(str).isin(victim_qids)
     else:
         is_victim = d["question_text"].str.contains(VICTIM_REGEX, case=False, na=False)
 
-    if CONSTRUCTS["cyber_qids"]:
-        is_cyber = d[qcol].isin(CONSTRUCTS["cyber_qids"])
+    cyber_qids = [q for q in d[qcol].dropna().astype(str).unique().tolist() if re.search(CYBER_REGEX, q)]
+
+    if cyber_qids:
+        is_cyber = d[qcol].astype(str).isin(cyber_qids)
     else:
         is_cyber = d["question_text"].str.contains(CYBER_REGEX, case=False, na=False)
 
-    if CONSTRUCTS["trust_qids"]:
-        is_trust = d[qcol].isin(CONSTRUCTS["trust_qids"])
+    trust_qids = [q for q in d[qcol].dropna().astype(str).unique().tolist() if re.search(TRUST_REGEX, q)]
+
+    if trust_qids:
+        is_trust = d[qcol].astype(str).isin(trust_qids)
     else:
         is_trust = d["question_text"].str.contains(TRUST_REGEX, case=False, na=False)
 
@@ -1027,5 +1033,4 @@ with st.expander("Debug (recomendado ahora)"):
     st.write("Ejemplos question_text (head):")
     st.dataframe(answer_level[["question_id", "question_text"]].drop_duplicates().head(30), use_container_width=True)
     st.write("Constructs config (victim/cyber/trust) — recomendado completar con question_id:")
-    st.write(CONSTRUCTS)
 
