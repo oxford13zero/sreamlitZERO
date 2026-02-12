@@ -597,7 +597,12 @@ def extract_demographics_from_options(selected_df: pd.DataFrame) -> pd.DataFrame
     if selected_df.empty:
         return pd.DataFrame(columns=["survey_response_id", "school_name", "edad", "grado", "genero", "tiempo"])
 
-    demo_rows = selected_df[selected_df["question_id"].isin(list(DEMOGRAPHIC_QIDS))].copy()
+    # Compat: algunas consultas traen el identificador como UUID (question_id)
+    # y otras traen el external_id del JSON (question_external_id).
+    key_col = "question_external_id" if "question_external_id" in selected_df.columns else "question_id"
+
+
+    demo_rows = selected_df[selected_df[key_col].isin(list(DEMOGRAPHIC_QIDS))].copy()
     if demo_rows.empty:
         return pd.DataFrame(columns=["survey_response_id", "school_name", "edad", "grado", "genero", "tiempo"])
 
