@@ -77,7 +77,7 @@ SUPABASE_KEY = st.secrets.get("SUPABASE_ANON_KEY", "")
 # DEBUG
 st.write(f"URL: {bool(SUPABASE_URL)}, KEY: {bool(SUPABASE_KEY)}")
 st.write(f"URL value: {SUPABASE_URL}")
-st.write(f"por aqui pasamos")
+st.write(f"por aqui pasamos2")
 
 # LLM configuration
 # ACTIVE: Groq (Llama)
@@ -773,6 +773,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
