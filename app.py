@@ -1,229 +1,667 @@
+# app.py
+"""
+TECH4ZERO-MX v3.0 — Streamlit Dashboard
+========================================
+Statistical analysis dashboard for school climate and bullying survey.
+
+Version: 3.0 (Modular Architecture)
+Survey: SURVEY_003
+Platform: Streamlit Cloud / Vercel
+"""
+
 import streamlit as st
 import pandas as pd
 import numpy as np
+from datetime import datetime
+import json
 import os
-import sys
 
-st.set_page_config(page_title="TECH4ZERO Debug", layout="wide")
+# Import custom modules
+from construct_definitions import (
+    parse_external_id,
+    get_construct_metadata,
+    get_all_constructs,
+    get_construct_items,
+    validate_construct_coverage,
+    is_global_screener,
+    CONSTRUCT_METADATA,
+)
+from stats_engine import (
+    analyze_reliability,
+    calculate_prevalence,
+    compare_subgroups,
+    bonferroni_threshold,
+    item_descriptives,
+    construct_correlation_matrix,
+    missing_pattern_summary,
+    run_cfa,
+)
+from visualization import (
+    plot_reliability_comparison,
+    plot_prevalence_by_construct,
+    plot_subgroup_comparison,
+    plot_correlation_heatmap,
+    plot_item_severity_ranking,
+    plot_ecology_hotspots,
+)
 
-st.title("🔍 COMPREHENSIVE DEBUG - TECH4ZERO-MX")
+# Supabase import
+from supabase import create_client
 
-# ══════════════════════════════════════════════════════════════
-# 1. SYSTEM INFO
-# ══════════════════════════════════════════════════════════════
-st.header("1️⃣ System Information")
-st.write(f"Python version: {sys.version}")
-st.write(f"Streamlit version: {st.__version__}")
-st.write(f"Pandas version: {pd.__version__}")
-st.write(f"NumPy version: {np.__version__}")
-
-# ══════════════════════════════════════════════════════════════
-# 2. ENVIRONMENT VARIABLES (os.environ)
-# ══════════════════════════════════════════════════════════════
-st.header("2️⃣ Environment Variables (os.environ)")
-
-env_keys = [k for k in os.environ.keys() if any(x in k.upper() for x in ['SUPABASE', 'GROQ', 'JWT', 'VERCEL'])]
-st.write(f"Found {len(env_keys)} relevant environment variables")
-
-env_dict = {}
-for k in sorted(env_keys):
-    val = os.environ.get(k, "")
-    if val and len(val) > 20:
-        env_dict[k] = f"{val[:20]}... (length: {len(val)})"
-    else:
-        env_dict[k] = val if val else "❌ EMPTY"
-
-st.json(env_dict)
-
-# ══════════════════════════════════════════════════════════════
-# 3. STREAMLIT SECRETS (st.secrets)
-# ══════════════════════════════════════════════════════════════
-st.header("3️⃣ Streamlit Secrets (st.secrets)")
-
-try:
-    all_secrets = dict(st.secrets)
-    st.write(f"Total secrets found: {len(all_secrets)}")
-    
-    secrets_display = {}
-    for k, v in all_secrets.items():
-        if isinstance(v, str) and len(v) > 20:
-            secrets_display[k] = f"{v[:20]}... (length: {len(v)})"
-        else:
-            secrets_display[k] = str(v)[:50]
-    
-    st.json(secrets_display)
-except Exception as e:
-    st.error(f"❌ Cannot read st.secrets: {e}")
 
 # ══════════════════════════════════════════════════════════════
-# 4. SUPABASE URL - ALL METHODS
+# CONFIGURATION
 # ══════════════════════════════════════════════════════════════
-st.header("4️⃣ SUPABASE_URL - All Access Methods")
 
-url_methods = {
-    "st.secrets.get('SUPABASE_URL')": None,
-    "st.secrets['SUPABASE_URL']": None,
-    "os.getenv('SUPABASE_URL')": None,
-    "os.environ.get('SUPABASE_URL')": None,
-}
+st.set_page_config(
+    page_title="TECH4ZERO-MX Dashboard",
+    page_icon="🏫",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-# Method 1
-try:
-    url_methods["st.secrets.get('SUPABASE_URL')"] = st.secrets.get("SUPABASE_URL", None)
-except Exception as e:
-    url_methods["st.secrets.get('SUPABASE_URL')"] = f"❌ Error: {e}"
-
-# Method 2
-try:
-    url_methods["st.secrets['SUPABASE_URL']"] = st.secrets["SUPABASE_URL"]
-except Exception as e:
-    url_methods["st.secrets['SUPABASE_URL']"] = f"❌ Error: {e}"
-
-# Method 3
-url_methods["os.getenv('SUPABASE_URL')"] = os.getenv("SUPABASE_URL", None)
-
-# Method 4
-url_methods["os.environ.get('SUPABASE_URL')"] = os.environ.get("SUPABASE_URL", None)
-
-for method, val in url_methods.items():
-    if val and not str(val).startswith("❌"):
-        st.success(f"✅ {method}: {val}")
-    else:
-        st.error(f"❌ {method}: {val}")
-
-# ══════════════════════════════════════════════════════════════
-# 5. SUPABASE KEY - ALL VARIANTS
-# ══════════════════════════════════════════════════════════════
-st.header("5️⃣ SUPABASE KEY - All Possible Variants")
-
-key_variants = [
-    "SUPABASE_KEY",
-    "SUPABASE_ANON_KEY", 
-    "SUPABASE_SERVICE_KEY",
-    "SUPABASE_PUBLISHABLE_KEY",
-    "SUPABASE_SERVICE_ROLE_KEY",
-    "JWT_SECRET",
-    "SUPABASE_JWT_SECRET",
-]
-
-found_keys = {}
-
-for variant in key_variants:
-    methods = {}
-    
-    # st.secrets.get
-    try:
-        val = st.secrets.get(variant, None)
-        if val:
-            methods["st.secrets.get"] = f"{str(val)[:20]}... (len: {len(val)})"
-    except:
-        pass
-    
-    # st.secrets direct
-    try:
-        val = st.secrets[variant]
-        if val:
-            methods["st.secrets[]"] = f"{str(val)[:20]}... (len: {len(val)})"
-    except:
-        pass
-    
-    # os.getenv
-    val = os.getenv(variant, None)
-    if val:
-        methods["os.getenv"] = f"{str(val)[:20]}... (len: {len(val)})"
-    
-    # os.environ.get
-    val = os.environ.get(variant, None)
-    if val:
-        methods["os.environ.get"] = f"{str(val)[:20]}... (len: {len(val)})"
-    
-    if methods:
-        found_keys[variant] = methods
-
-if found_keys:
-    st.success(f"✅ Found {len(found_keys)} key variants:")
-    st.json(found_keys)
-else:
-    st.error("❌ No Supabase keys found in ANY variant!")
-
-# ══════════════════════════════════════════════════════════════
-# 6. RECOMMENDED CONFIGURATION
-# ══════════════════════════════════════════════════════════════
-st.header("6️⃣ Recommended Configuration")
-
-# Try the fallback pattern from working app
+# Supabase configuration (WORKING PATTERN from debug)
 SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.getenv("SUPABASE_URL", ""))
-SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", os.getenv("SUPABASE_ANON_KEY", ""))
+SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", os.getenv("SUPABASE_KEY", ""))
 
-st.code(f"""
-# Current configuration result:
-SUPABASE_URL = "{SUPABASE_URL}"
-SUPABASE_KEY = "{SUPABASE_KEY[:20] if SUPABASE_KEY else 'EMPTY'}..." (length: {len(SUPABASE_KEY) if SUPABASE_KEY else 0})
-""")
+if not SUPABASE_URL or not SUPABASE_KEY:
+    st.error("❌ Missing SUPABASE_URL / SUPABASE_KEY")
+    st.stop()
 
-if SUPABASE_URL and SUPABASE_KEY:
-    st.success("✅ Both URL and KEY are populated!")
+# Create Supabase client
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# Survey configuration
+SURVEY_CODE = "SURVEY_003"
+
+
+# ══════════════════════════════════════════════════════════════
+# DATA LOADING
+# ══════════════════════════════════════════════════════════════
+
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def load_survey_data():
+    """
+    Load all survey data from Supabase.
     
-    # Try to connect
-    st.subheader("Testing Supabase Connection...")
+    Returns:
+        Tuple of (responses_df, answers_df, students_df)
+    """
     try:
-        from supabase import create_client
-        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-        st.success("✅ Supabase client created successfully!")
+        # 1. Get survey ID for SURVEY_003
+        survey_result = supabase.table('surveys').select('id').eq('code', SURVEY_CODE).execute()
         
-        # Try a simple query
-        try:
-            result = supabase.table("surveys").select("id").limit(1).execute()
-            st.success(f"✅ Database connection works! Found {len(result.data)} surveys")
-        except Exception as e:
-            st.error(f"❌ Database query failed: {e}")
+        if not survey_result.data:
+            st.warning(f"⚠️ Survey {SURVEY_CODE} not found")
+            return None, None, None
+        
+        survey_id = survey_result.data[0]['id']
+        
+        # 2. Load survey responses (submitted only)
+        responses = supabase.table('survey_responses').select(
+            'id, survey_id, school_id, student_external_id, status, started_at, submitted_at'
+        ).eq('survey_id', survey_id).eq('status', 'submitted').execute()
+        
+        responses_df = pd.DataFrame(responses.data)
+        
+        if responses_df.empty:
+            st.warning(f"⚠️ No submitted responses for {SURVEY_CODE}")
+            return None, None, None
+        
+        # 3. Load question answers
+        response_ids = responses_df['id'].tolist()
+        
+        # Chunk requests to avoid URL length limits
+        answers_data = []
+        chunk_size = 100
+        for i in range(0, len(response_ids), chunk_size):
+            chunk = response_ids[i:i + chunk_size]
+            chunk_result = supabase.table('question_answers').select(
+                'id, survey_response_id, question_id'
+            ).in_('survey_response_id', chunk).execute()
+            answers_data.extend(chunk_result.data)
+        
+        answers_df = pd.DataFrame(answers_data)
+        
+        if answers_df.empty:
+            st.warning("⚠️ No question answers found")
+            return responses_df, None, None
+        
+        # 4. Load questions
+        question_ids = answers_df['question_id'].unique().tolist()
+        
+        questions_data = []
+        for i in range(0, len(question_ids), chunk_size):
+            chunk = question_ids[i:i + chunk_size]
+            chunk_result = supabase.table('questions').select(
+                'id, external_id, question_text, question_type'
+            ).in_('id', chunk).execute()
+            questions_data.extend(chunk_result.data)
+        
+        questions_df = pd.DataFrame(questions_data)
+        
+        # 5. Load selected options
+        answer_ids = answers_df['id'].tolist()
+        
+        selected_data = []
+        for i in range(0, len(answer_ids), chunk_size):
+            chunk = answer_ids[i:i + chunk_size]
+            chunk_result = supabase.table('answer_selected_options').select(
+                'question_answer_id, option_id'
+            ).in_('question_answer_id', chunk).execute()
+            selected_data.extend(chunk_result.data)
+        
+        selected_df = pd.DataFrame(selected_data)
+        
+        # 6. Load options
+        if not selected_df.empty:
+            option_ids = selected_df['option_id'].unique().tolist()
             
-    except Exception as e:
-        st.error(f"❌ Failed to create Supabase client: {e}")
-else:
-    st.error("❌ URL or KEY is missing!")
+            options_data = []
+            for i in range(0, len(option_ids), chunk_size):
+                chunk = option_ids[i:i + chunk_size]
+                chunk_result = supabase.table('question_options').select(
+                    'id, question_id, option_code, option_text'
+                ).in_('id', chunk).execute()
+                options_data.extend(chunk_result.data)
+            
+            options_df = pd.DataFrame(options_data)
+        else:
+            options_df = pd.DataFrame()
+        
+        # 7. Merge to create answer-level dataframe
+        answers_merged = answers_df.merge(
+            questions_df, 
+            left_on='question_id', 
+            right_on='id', 
+            suffixes=('', '_q')
+        )
+        
+        if not selected_df.empty and not options_df.empty:
+            answers_merged = answers_merged.merge(
+                selected_df,
+                left_on='id',
+                right_on='question_answer_id',
+                how='left'
+            )
+            
+            answers_merged = answers_merged.merge(
+                options_df,
+                left_on='option_id',
+                right_on='id',
+                suffixes=('', '_opt'),
+                how='left'
+            )
+            
+            # Convert option_code to numeric score (0-4 scale)
+            answers_merged['score'] = pd.to_numeric(
+                answers_merged['option_code'], 
+                errors='coerce'
+            )
+        else:
+            answers_merged['option_code'] = None
+            answers_merged['option_text'] = None
+            answers_merged['score'] = None
+        
+        # Clean column names
+        answers_merged = answers_merged.rename(columns={
+            'id': 'answer_id',
+            'external_id': 'question_id',  # Use external_id as question_id
+        })
+        
+        # 8. Create student-level dataframe
+        students_df = responses_df.copy()
+        
+        # Add demographic variables
+        demo_questions = {
+            'survey_003_zero_general_curso': 'curso',
+            'survey_003_zero_general_edad': 'edad',
+            'survey_003_zero_general_genero': 'genero',
+            'survey_003_zero_general_lengua': 'lengua_indigena',
+            'survey_003_zero_general_orientacion': 'orientacion',
+            'survey_003_zero_general_tiempo': 'tiempo_escuela',
+            'survey_003_zero_general_tipo_escuela': 'tipo_escuela',
+        }
+        
+        for ext_id, var_name in demo_questions.items():
+            demo_answers = answers_merged[
+                answers_merged['question_id'] == ext_id
+            ][['survey_response_id', 'option_text']].rename(
+                columns={'option_text': var_name}
+            )
+            
+            students_df = students_df.merge(
+                demo_answers, 
+                left_on='id', 
+                right_on='survey_response_id', 
+                how='left'
+            )
+            
+            if 'survey_response_id' in students_df.columns:
+                students_df = students_df.drop(columns=['survey_response_id'])
+        
+        return responses_df, answers_merged, students_df
     
-    if not SUPABASE_URL:
-        st.warning("SUPABASE_URL is empty - check Vercel environment variables")
-    if not SUPABASE_KEY:
-        st.warning("SUPABASE_KEY is empty - check Vercel environment variables")
+    except Exception as e:
+        st.error(f"❌ Error loading data: {e}")
+        import traceback
+        st.code(traceback.format_exc())
+        return None, None, None
+
 
 # ══════════════════════════════════════════════════════════════
-# 7. VERCEL DEPLOYMENT INFO
+# CONSTRUCT SCORE CALCULATION
 # ══════════════════════════════════════════════════════════════
-st.header("7️⃣ Vercel Deployment Information")
 
-vercel_vars = {
-    "VERCEL": os.getenv("VERCEL", "Not Vercel"),
-    "VERCEL_ENV": os.getenv("VERCEL_ENV", "Unknown"),
-    "VERCEL_URL": os.getenv("VERCEL_URL", "Unknown"),
-    "VERCEL_GIT_COMMIT_SHA": os.getenv("VERCEL_GIT_COMMIT_SHA", "Unknown")[:8] + "...",
-}
+def calculate_construct_scores(answers_df, students_df):
+    """
+    Calculate sum scores for each construct.
+    
+    Args:
+        answers_df: Answer-level DataFrame
+        students_df: Student-level DataFrame
+    
+    Returns:
+        Updated students_df with construct scores
+    """
+    if answers_df is None or answers_df.empty:
+        return students_df
+    
+    all_constructs = [c for c in get_all_constructs() if c != 'demographic']
+    all_external_ids = answers_df['question_id'].unique().tolist()
+    
+    for construct in all_constructs:
+        # Get items for this construct
+        construct_items = get_construct_items(construct, all_external_ids)
+        construct_items = [item for item in construct_items if not is_global_screener(item)]
+        
+        if not construct_items:
+            continue
+        
+        # Calculate sum score
+        construct_answers = answers_df[
+            answers_df['question_id'].isin(construct_items)
+        ][['survey_response_id', 'score']]
+        
+        sum_scores = construct_answers.groupby('survey_response_id')['score'].sum().reset_index()
+        sum_scores.columns = ['id', f'{construct}_sum']
+        
+        students_df = students_df.merge(sum_scores, on='id', how='left')
+        
+        # Calculate frequency indicator (mean score >= 2)
+        mean_scores = construct_answers.groupby('survey_response_id')['score'].mean().reset_index()
+        mean_scores[f'{construct}_freq'] = mean_scores['score'] >= 2
+        mean_scores = mean_scores[['survey_response_id', f'{construct}_freq']].rename(
+            columns={'survey_response_id': 'id'}
+        )
+        
+        students_df = students_df.merge(mean_scores, on='id', how='left')
+    
+    return students_df
 
-st.json(vercel_vars)
 
 # ══════════════════════════════════════════════════════════════
-# 8. ACTION ITEMS
+# MAIN DASHBOARD
 # ══════════════════════════════════════════════════════════════
-st.header("8️⃣ Next Steps")
 
-st.markdown("""
-### Based on the output above:
+def main():
+    """Main Streamlit application"""
+    
+    # Header
+    st.title("🏫 TECH4ZERO-MX v1.0")
+    st.markdown("**Encuesta de Clima Escolar, Bullying y Cyberbullying**")
+    st.markdown("---")
+    
+    # Sidebar
+    with st.sidebar:
+        st.header("⚙️ Configuración")
+        
+        school_name = st.text_input(
+            "Nombre de la Escuela",
+            value="Escuela Secundaria Federal",
+            help="Aparecerá en reportes (cuando se habilite)"
+        )
+        
+        st.markdown("---")
+        st.markdown("**📊 Encuesta:** SURVEY_003")
+        st.markdown("**💾 Base de Datos:** Supabase")
+        st.markdown("**📈 Versión:** 3.0")
+        
+        if st.button("🔄 Recargar Datos"):
+            st.cache_data.clear()
+            st.rerun()
+    
+    # Load data
+    with st.spinner("Cargando datos..."):
+        responses_df, answers_df, students_df = load_survey_data()
+    
+    if responses_df is None or answers_df is None or students_df is None:
+        st.error("❌ No se pudieron cargar los datos. Verifica la configuración.")
+        return
+    
+    # Calculate construct scores
+    students_df = calculate_construct_scores(answers_df, students_df)
+    
+    # Get all external IDs
+    all_external_ids = answers_df['question_id'].unique().tolist()
+    
+    # Validate coverage
+    coverage = validate_construct_coverage(all_external_ids)
+    
+    # ════════════════════════════════════════════════════════════
+    # SECTION 1: OVERVIEW (KPIs)
+    # ════════════════════════════════════════════════════════════
+    
+    st.header("📊 1. Panorama General")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Total Estudiantes", len(students_df))
+    
+    with col2:
+        if 'victimizacion_freq' in students_df.columns:
+            prev = calculate_prevalence(students_df['victimizacion_freq'])
+            st.metric(
+                "Victimización Frecuente",
+                f"{prev.pct:.1f}%" if not np.isnan(prev.pct) else "N/A",
+                delta=f"IC95%: {prev.ci_lower:.1f}-{prev.ci_upper:.1f}" if not np.isnan(prev.ci_lower) else "",
+                delta_color="inverse"
+            )
+    
+    with col3:
+        if 'cybervictimizacion_freq' in students_df.columns:
+            prev = calculate_prevalence(students_df['cybervictimizacion_freq'])
+            st.metric(
+                "Cybervictimización",
+                f"{prev.pct:.1f}%" if not np.isnan(prev.pct) else "N/A",
+                delta=f"IC95%: {prev.ci_lower:.1f}-{prev.ci_upper:.1f}" if not np.isnan(prev.ci_lower) else "",
+                delta_color="inverse"
+            )
+    
+    with col4:
+        if 'victimizacion_freq' in students_df.columns:
+            prev = calculate_prevalence(students_df['victimizacion_freq'])
+            
+            threshold_emoji = {
+                'CRISIS': '🔴',
+                'INTERVENCION': '🟠',
+                'ATENCION': '🟡',
+                'MONITOREO': '🟢',
+                'SIN_DATOS': '⚪',
+            }
+            
+            st.metric(
+                "Semáforo",
+                f"{threshold_emoji.get(prev.threshold_category, '⚪')} {prev.threshold_category}"
+            )
+    
+    st.markdown("---")
+    
+    # ════════════════════════════════════════════════════════════
+    # SECTION 2: RELIABILITY
+    # ════════════════════════════════════════════════════════════
+    
+    st.header("🔬 2. Calidad y Fiabilidad de Datos")
+    
+    # Calculate reliability for all constructs
+    reliability_results = []
+    substantive_constructs = [c for c in get_all_constructs() if c != 'demographic']
+    
+    for construct in substantive_constructs:
+        items = get_construct_items(construct, all_external_ids)
+        result = analyze_reliability(answers_df, construct, list(items))
+        reliability_results.append(result)
+    
+    # Reliability table
+    rel_data = []
+    for r in reliability_results:
+        metadata = get_construct_metadata(r.construct)
+        rel_data.append({
+            'Constructo': metadata.display_name if metadata else r.construct,
+            'N Ítems': r.n_items,
+            'Cronbach α': f"{r.cronbach_alpha:.3f}" if not np.isnan(r.cronbach_alpha) else "—",
+            'McDonald ω': f"{r.mcdonald_omega:.3f}" if not np.isnan(r.mcdonald_omega) else "—",
+            'Rango Publicado': f"{r.published_alpha_range[0]:.2f}-{r.published_alpha_range[1]:.2f}" if r.published_alpha_range[0] > 0 else "—",
+            'Estado': '✅ Fiable' if r.alpha_meets_threshold else '⚠️ Bajo',
+        })
+    
+    st.dataframe(pd.DataFrame(rel_data), use_container_width=True)
+    
+    # Reliability comparison chart
+    if reliability_results:
+        fig = plot_reliability_comparison(reliability_results)
+        st.pyplot(fig)
+    
+    st.markdown("---")
+    
+    # ════════════════════════════════════════════════════════════
+    # SECTION 3: PREVALENCE BY CONSTRUCT
+    # ════════════════════════════════════════════════════════════
+    
+    st.header("📈 3. Prevalencia por Constructo")
+    
+    # Calculate prevalence for all constructs
+    prevalence_data = {}
+    for construct in substantive_constructs:
+        if f'{construct}_freq' in students_df.columns:
+            prev = calculate_prevalence(students_df[f'{construct}_freq'])
+            prevalence_data[construct] = prev
+    
+    # Prevalence chart
+    if prevalence_data:
+        fig = plot_prevalence_by_construct(prevalence_data)
+        st.pyplot(fig)
+    
+    # Prevalence table
+    prev_table = []
+    for construct, prev in prevalence_data.items():
+        metadata = get_construct_metadata(construct)
+        prev_table.append({
+            'Constructo': metadata.display_name if metadata else construct,
+            'Prevalencia': f"{prev.pct:.1f}%" if not np.isnan(prev.pct) else "N/A",
+            'IC 95%': f"{prev.ci_lower:.1f}-{prev.ci_upper:.1f}" if not np.isnan(prev.ci_lower) else "N/A",
+            'N Afectados': f"{prev.n_true}/{prev.n_with_data}",
+            'Categoría': prev.threshold_category,
+        })
+    
+    st.dataframe(pd.DataFrame(prev_table), use_container_width=True)
+    
+    st.markdown("---")
+    
+    # ════════════════════════════════════════════════════════════
+    # SECTION 4: SUBGROUP ANALYSIS
+    # ════════════════════════════════════════════════════════════
+    
+    st.header("👥 4. Análisis por Subgrupos")
+    
+    # Demographic variable selector
+    demo_vars = {
+        'genero': 'Género',
+        'curso': 'Curso/Grado',
+        'lengua_indigena': 'Lengua Indígena',
+        'orientacion': 'Orientación Sexual',
+        'tipo_escuela': 'Tipo de Escuela',
+    }
+    
+    available_vars = {k: v for k, v in demo_vars.items() if k in students_df.columns}
+    
+    if available_vars:
+        selected_demo = st.selectbox(
+            "Seleccionar variable demográfica:",
+            options=list(available_vars.keys()),
+            format_func=lambda x: available_vars[x]
+        )
+        
+        # Outcome selector
+        outcome_options = {
+            f'{c}_freq': get_construct_metadata(c).display_name 
+            for c in substantive_constructs 
+            if f'{c}_freq' in students_df.columns and get_construct_metadata(c)
+        }
+        
+        if outcome_options:
+            selected_outcome = st.selectbox(
+                "Seleccionar indicador:",
+                options=list(outcome_options.keys()),
+                format_func=lambda x: outcome_options[x]
+            )
+            
+            # Calculate comparison
+            n_comparisons = len(available_vars) * len(outcome_options)
+            
+            comparison = compare_subgroups(
+                students_df,
+                outcome_col=selected_outcome,
+                grouping_col=selected_demo,
+                n_total_tests=n_comparisons
+            )
+            
+            if comparison:
+                # Comparison chart
+                fig = plot_subgroup_comparison(comparison)
+                st.pyplot(fig)
+                
+                # Detailed table
+                st.dataframe(comparison.group_stats, use_container_width=True)
+                
+                # Statistical summary
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("χ² (Chi-cuadrado)", f"{comparison.chi2:.2f}")
+                with col2:
+                    st.metric("p-value", f"{comparison.p_value:.4f}")
+                with col3:
+                    st.metric("V de Cramér", f"{comparison.cramers_v:.2f}")
+                
+                if comparison.is_significant:
+                    st.success(f"✅ Diferencia estadísticamente significativa (p < {comparison.bonferroni_alpha:.4f})")
+                else:
+                    st.info(f"ℹ️ Diferencia no significativa (p ≥ {comparison.bonferroni_alpha:.4f})")
+            else:
+                st.warning("No hay suficientes datos para este análisis")
+    else:
+        st.warning("No hay variables demográficas disponibles")
+    
+    st.markdown("---")
+    
+    # ════════════════════════════════════════════════════════════
+    # SECTION 5: ITEM-LEVEL ANALYSIS
+    # ════════════════════════════════════════════════════════════
+    
+    st.header("🔍 5. Análisis a Nivel de Ítems")
+    
+    construct_selector = st.selectbox(
+        "Seleccionar constructo:",
+        options=substantive_constructs,
+        format_func=lambda x: get_construct_metadata(x).display_name if get_construct_metadata(x) else x
+    )
+    
+    if construct_selector:
+        items = get_construct_items(construct_selector, all_external_ids)
+        item_data = item_descriptives(answers_df, list(items))
+        
+        if not item_data.empty:
+            # Item severity chart
+            fig = plot_item_severity_ranking(item_data, construct_selector)
+            st.pyplot(fig)
+            
+            # Item table
+            st.dataframe(item_data, use_container_width=True)
+        else:
+            st.warning("No hay datos de ítems disponibles")
+    
+    st.markdown("---")
+    
+    # ════════════════════════════════════════════════════════════
+    # SECTION 6: CONSTRUCT CORRELATIONS
+    # ════════════════════════════════════════════════════════════
+    
+    st.header("🔗 6. Correlaciones entre Constructos")
+    
+    corr_matrix = construct_correlation_matrix(students_df, substantive_constructs)
+    
+    if not corr_matrix.empty:
+        fig = plot_correlation_heatmap(corr_matrix)
+        st.pyplot(fig)
+        
+        with st.expander("Ver matriz de correlaciones"):
+            st.dataframe(corr_matrix.style.background_gradient(cmap='RdYlGn', vmin=-1, vmax=1))
+    else:
+        st.warning("No hay suficientes datos para calcular correlaciones")
+    
+    st.markdown("---")
+    
+    # ════════════════════════════════════════════════════════════
+    # SECTION 7: ECOLOGY HOTSPOTS
+    # ════════════════════════════════════════════════════════════
+    
+    st.header("🗺️ 7. Ecología del Bullying: Espacios de Riesgo")
+    
+    st.info("📌 Esta sección analiza ÚNICAMENTE a estudiantes que reportaron victimización.")
+    
+    # Filter to victims only
+    if 'victimizacion_freq' in students_df.columns:
+        victims_df = students_df[students_df['victimizacion_freq'] == True]
+        
+        if len(victims_df) >= 5:
+            # Ecology questions
+            ecology_items = get_construct_items('ecologia_espacios', all_external_ids)
+            
+            # Calculate hotspot scores
+            hotspot_data = []
+            for item in ecology_items:
+                item_answers = answers_df[
+                    (answers_df['question_id'] == item) &
+                    (answers_df['survey_response_id'].isin(victims_df['id']))
+                ]
+                
+                if not item_answers.empty:
+                    scores = item_answers['score'].dropna()
+                    if len(scores) > 0:
+                        # Get question text
+                        q_text = item_answers.iloc[0].get('question_text', item)
+                        
+                        hotspot_data.append({
+                            'lugar': str(q_text)[:50],
+                            'mean_score': float(scores.mean()),
+                            'pct_high': float((scores >= 2).mean() * 100),
+                            'n': int(len(scores)),
+                        })
+            
+            if hotspot_data:
+                hotspot_data = sorted(hotspot_data, key=lambda x: x['mean_score'], reverse=True)
+                
+                # Hotspot chart
+                fig = plot_ecology_hotspots(hotspot_data)
+                st.pyplot(fig)
+                
+                # Hotspot table
+                st.dataframe(pd.DataFrame(hotspot_data), use_container_width=True)
+            else:
+                st.warning("No hay datos de ecología disponibles")
+        else:
+            st.warning(f"Insuficientes víctimas para análisis (n={len(victims_df)}, mínimo=5)")
+    else:
+        st.warning("No hay datos de victimización disponibles")
+    
+    st.markdown("---")
+    
+    # ════════════════════════════════════════════════════════════
+    # SECTION 8: LLM REPORT (DISABLED FOR NOW)
+    # ════════════════════════════════════════════════════════════
+    
+    st.header("📝 8. Informe para Docentes")
+    st.info("🔧 La generación de informes con IA está temporalmente deshabilitada. Próximamente disponible.")
+    
+    # Footer
+    st.markdown("---")
+    st.caption("TECH4ZERO-MX v3.0 | Powered by Streamlit + Supabase")
 
-1. **Check Section 5** - Which key variant was found?
-2. **Check Section 6** - Did connection test pass?
-3. **If no keys found in Section 5:**
-   - Go to Vercel → Environment Variables
-   - Verify variables exist and are not empty
-   - Check they're enabled for the correct environment (Production/Preview/Development)
-   - Redeploy after any changes
 
-4. **If keys found but connection fails:**
-   - Verify the key is the correct type (anon key, not service_role)
-   - Check Supabase project is not paused
-   - Verify URL matches your Supabase project
+# ══════════════════════════════════════════════════════════════
+# RUN APP
+# ══════════════════════════════════════════════════════════════
 
-5. **Copy ALL output above** and share for further diagnosis
-""")
-
-st.stop()
+if __name__ == "__main__":
+    main()
