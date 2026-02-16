@@ -72,7 +72,7 @@ st.set_page_config(
 
 # Supabase configuration (from secrets)
 SUPABASE_URL = st.secrets.get("SUPABASE_URL", "")
-SUPABASE_KEY = st.secrets.get("SUPABASE_PUBLISHABLE_KEY", "")
+SUPABASE_KEY = st.secrets.get("SUPABASE_ANON_KEY", "")
 
 # DEBUG
 st.write(f"URL: {bool(SUPABASE_URL)}, KEY: {bool(SUPABASE_KEY)}")
@@ -773,6 +773,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
