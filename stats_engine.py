@@ -438,6 +438,197 @@ def construct_correlations(
 # MISSING DATA ANALYSIS
 # ══════════════════════════════════════════════════════════════
 
+# ══════════════════════════════════════════════════════════════
+# WRAPPER FUNCTIONS FOR APP.PY COMPATIBILITY
+# ══════════════════════════════════════════════════════════════
+
+from dataclasses import dataclass
+
+@dataclass
+class ReliabilityResult:
+    """Reliability analysis results"""
+    construct: str
+    n_items: int
+    n_students: int
+    cronbach_alpha: float
+    mcdonald_omega: float
+    alpha_meets_threshold: bool
+    omega_meets_threshold: bool
+    published_alpha_range: tuple
+    items_excluded: list
+
+@dataclass  
+class PrevalenceResult:
+    """Prevalence with confidence interval"""
+    pct: float
+    n_with_data: int
+    n_true: int
+    n_missing: int
+    missing_pct: float
+    ci_lower: float
+    ci_upper: float
+    threshold_category: str
+
+@dataclass
+class SubgroupComparison:
+    """Subgroup comparison results"""
+    grouping_var: str
+    outcome_var: str
+    chi2: float
+    p_value: float
+    cramers_v: float
+    n_total: int
+    group_stats: pd.DataFrame
+    bonferroni_alpha: float
+    is_significant: bool
+
+
+def analyze_reliability(answer_df, construct, external_ids):
+    """Analyze reliability for a construct"""
+    from construct_definitions import is_global_screener, get_construct_metadata
+    
+    items_no_screeners = [ext_id for ext_id in external_ids if not is_global_screener(ext_id)]
+    
+    mask = answer_df['question_id'].isin(items_no_screeners)
+    construct_data = answer_df[mask][['survey_response_id', 'question_id', 'score']].copy()
+    
+    if construct_data.empty:
+        metadata = get_construct_metadata(construct)
+        return ReliabilityResult(
+            construct=construct,
+            n_items=0,
+            n_students=0,
+            cronbach_alpha=np.nan,
+            mcdonald_omega=np.nan,
+            alpha_meets_threshold=False,
+            omega_meets_threshold=False,
+            published_alpha_range=metadata.published_alpha_range if metadata else (0.0, 0.0),
+            items_excluded=[ext_id for ext_id in external_ids if is_global_screener(ext_id)],
+        )
+    
+    pivot = construct_data.pivot_table(
+        index='survey_response_id',
+        columns='question_id',
+        values='score',
+        aggfunc='mean'
+    )
+    
+    alpha = cronbach_alpha(pivot)
+    omega = mcdonalds_omega(pivot)
+    
+    metadata = get_construct_metadata(construct)
+    
+    return ReliabilityResult(
+        construct=construct,
+        n_items=len(items_no_screeners),
+        n_students=int(pivot.shape[0]),
+        cronbach_alpha=alpha,
+        mcdonald_omega=omega,
+        alpha_meets_threshold=bool(not np.isnan(alpha) and alpha >= ALPHA_THRESHOLD),
+        omega_meets_threshold=bool(not np.isnan(omega) and omega >= 0.70),
+        published_alpha_range=metadata.published_alpha_range if metadata else (0.0, 0.0),
+        items_excluded=[ext_id for ext_id in external_ids if is_global_screener(ext_id)],
+    )
+
+
+def calculate_prevalence(indicator_series):
+    """Calculate prevalence with Wilson CI"""
+    if indicator_series is None or len(indicator_series) == 0:
+        return PrevalenceResult(
+            pct=np.nan, n_with_data=0, n_true=0, n_missing=0,
+            missing_pct=np.nan, ci_lower=np.nan, ci_upper=np.nan,
+            threshold_category="SIN_DATOS"
+        )
+    
+    n_total = len(indicator_series)
+    n_missing = int(indicator_series.isna().sum())
+    n_with_data = n_total - n_missing
+    
+    if n_with_data == 0:
+        return PrevalenceResult(
+            pct=np.nan, n_with_data=0, n_true=0, n_missing=n_missing,
+            missing_pct=100.0, ci_lower=np.nan, ci_upper=np.nan,
+            threshold_category="SIN_DATOS"
+        )
+    
+    valid = indicator_series.dropna().astype(bool)
+    n_true = int(valid.sum())
+    pct = float(valid.mean() * 100)
+    
+    ci_lower, ci_upper = wilson_ci(n_true, n_with_data)
+    
+    def threshold_flag(pct):
+        if np.isnan(pct): return "SIN_DATOS"
+        if pct >= 20: return "CRISIS"
+        if pct >= 10: return "INTERVENCION"
+        if pct >= 5: return "ATENCION"
+        return "MONITOREO"
+    
+    return PrevalenceResult(
+        pct=round(pct, 1),
+        n_with_data=n_with_data,
+        n_true=n_true,
+        n_missing=n_missing,
+        missing_pct=round(100 * n_missing / n_total, 1) if n_total > 0 else np.nan,
+        ci_lower=ci_lower,
+        ci_upper=ci_upper,
+        threshold_category=threshold_flag(pct)
+    )
+
+
+def compare_subgroups(student_df, outcome_col, grouping_col, n_total_tests=1):
+    """Compare prevalence across subgroups"""
+    merged = student_df[[outcome_col, grouping_col]].dropna()
+    
+    if merged.empty or merged[grouping_col].nunique() < 2:
+        return None
+    
+    chi2_result = chi2_cramer(merged[grouping_col], merged[outcome_col])
+    
+    group_stats = []
+    for group, sub in merged.groupby(grouping_col):
+        prev = calculate_prevalence(sub[outcome_col])
+        group_stats.append({
+            grouping_col: group,
+            'n_students': len(sub),
+            'n_with_data': prev.n_with_data,
+            'n_true': prev.n_true,
+            'pct': prev.pct,
+            'ci_lower': prev.ci_lower,
+            'ci_upper': prev.ci_upper,
+        })
+    
+    group_stats_df = pd.DataFrame(group_stats).sort_values('pct', ascending=False)
+    
+    bonf_alpha = bonferroni_threshold(n_total_tests)
+    
+    return SubgroupComparison(
+        grouping_var=grouping_col,
+        outcome_var=outcome_col,
+        chi2=chi2_result['chi2'],
+        p_value=chi2_result['p_value'],
+        cramers_v=chi2_result['cramers_v'],
+        n_total=chi2_result['n'],
+        group_stats=group_stats_df,
+        bonferroni_alpha=bonf_alpha,
+        is_significant=bool(not np.isnan(chi2_result['p_value']) and chi2_result['p_value'] < bonf_alpha),
+    )
+
+
+def construct_correlation_matrix(student_df, constructs):
+    """Calculate correlation matrix between constructs"""
+    score_cols = [f'{c}_sum' for c in constructs if f'{c}_sum' in student_df.columns]
+    
+    if len(score_cols) < 2:
+        return pd.DataFrame()
+    
+    corr = student_df[score_cols].corr()
+    corr.columns = [c.replace('_sum', '') for c in corr.columns]
+    corr.index = [c.replace('_sum', '') for c in corr.index]
+    
+    return corr
+
+
 def missing_pattern_summary(student_df: pd.DataFrame) -> Dict:
     """Analyze missing data patterns."""
     cols = [c for c in student_df.columns if c.endswith('_sum') or c.endswith('_freq')]
