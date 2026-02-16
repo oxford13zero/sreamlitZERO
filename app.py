@@ -70,28 +70,18 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Supabase configuration (from secrets)
-SUPABASE_URL = st.secrets.get("SUPABASE_URL", "")
-SUPABASE_KEY = st.secrets.get("SUPABASE_ANON_KEY", "")
+import os
+from supabase import create_client
 
-# DEBUG
-st.write(f"URL: {bool(SUPABASE_URL)}, KEY: {bool(SUPABASE_KEY)}")
-st.write(f"URL value: {SUPABASE_URL}")
-st.write(f"URL exists: {bool(SUPABASE_URL)}")
-st.write(f"KEY exists: {bool(SUPABASE_KEY)}")
-st.write(f"URL length: {len(SUPABASE_URL) if SUPABASE_URL else 0}")
-st.write(f"KEY length: {len(SUPABASE_KEY) if SUPABASE_KEY else 0}")
-st.write(f"KEY first 20 chars: {SUPABASE_KEY[:20] if SUPABASE_KEY else 'EMPTY'}")
-st.write(f"por aqui pasamos3")
+# Supabase config
+SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.getenv("SUPABASE_URL", ""))
+SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", os.getenv("SUPABASE_ANON_KEY", ""))
 
-# LLM configuration
-# ACTIVE: Groq (Llama)
-GROQ_API_KEY = st.secrets.get("JWT_SECRET", "")
-LLAMA_MODEL = "llama-3.3-70b-versatile"
+if not SUPABASE_URL or not SUPABASE_KEY:
+    st.error("Missing SUPABASE_URL / SUPABASE_KEY")
+    st.stop()
 
-# COMMENTED: Anthropic (Claude) - Activate when ready
-# ANTHROPIC_API_KEY = st.secrets.get("ANTHROPIC_API_KEY", "")
-# CLAUDE_MODEL = "claude-sonnet-4-5-20250929"
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 SURVEY_CODE = "SURVEY_003"
 
@@ -778,6 +768,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
