@@ -74,6 +74,10 @@ st.set_page_config(
 SUPABASE_URL = st.secrets.get("SUPABASE_URL", "")
 SUPABASE_KEY = st.secrets.get("SUPABASE_SERVICE_KEY", "")
 
+# DEBUG
+st.write(f"URL: {bool(SUPABASE_URL)}, KEY: {bool(SUPABASE_KEY)}")
+st.write(f"URL value: {SUPABASE_URL}")
+
 # LLM configuration
 # ACTIVE: Groq (Llama)
 GROQ_API_KEY = st.secrets.get("JWT_SECRET", "")
@@ -768,4 +772,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
