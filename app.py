@@ -79,16 +79,11 @@ SURVEY_CODE = "SURVEY_003"
 # DATA LOADING
 # ══════════════════════════════════════════════════════════════
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes
+@st.cache_data(ttl=300)
 def load_survey_data():
-    """
-    Load all survey data from Supabase.
-    
-    Returns:
-        Tuple of (responses_df, answers_df, students_df)
-    """
+    """Load all survey data from Supabase."""
     try:
-        # 1. Get survey ID for SURVEY_003
+        # 1. Get survey ID
         survey_result = supabase.table('surveys').select('id').eq('code', SURVEY_CODE).execute()
         
         if not survey_result.data:
@@ -97,9 +92,9 @@ def load_survey_data():
         
         survey_id = survey_result.data[0]['id']
         
-        # 2. Load survey responses (submitted only)
+        # 2. Load responses (submitted only)
         responses = supabase.table('survey_responses').select(
-            'id, survey_id, school_id, student_external_id, status, started_at, submitted_at'
+            'id, survey_id, school_id, student_external_id, status'
         ).eq('survey_id', survey_id).eq('status', 'submitted').execute()
         
         responses_df = pd.DataFrame(responses.data)
@@ -108,139 +103,139 @@ def load_survey_data():
             st.warning(f"⚠️ No submitted responses for {SURVEY_CODE}")
             return None, None, None
         
-        # 3. Load question answers
         response_ids = responses_df['id'].tolist()
         
-        # Chunk requests to avoid URL length limits
+        # 3. Load answers (chunked)
         answers_data = []
         chunk_size = 100
         for i in range(0, len(response_ids), chunk_size):
             chunk = response_ids[i:i + chunk_size]
-            chunk_result = supabase.table('question_answers').select(
+            result = supabase.table('question_answers').select(
                 'id, survey_response_id, question_id'
             ).in_('survey_response_id', chunk).execute()
-            answers_data.extend(chunk_result.data)
+            answers_data.extend(result.data)
         
         answers_df = pd.DataFrame(answers_data)
         
         if answers_df.empty:
-            st.warning("⚠️ No question answers found")
             return responses_df, None, None
         
         # 4. Load questions
         question_ids = answers_df['question_id'].unique().tolist()
-        
         questions_data = []
         for i in range(0, len(question_ids), chunk_size):
             chunk = question_ids[i:i + chunk_size]
-            chunk_result = supabase.table('questions').select(
-                'id, external_id, question_text, question_type'
+            result = supabase.table('questions').select(
+                'id, external_id, question_text'
             ).in_('id', chunk).execute()
-            questions_data.extend(chunk_result.data)
+            questions_data.extend(result.data)
         
         questions_df = pd.DataFrame(questions_data)
         
         # 5. Load selected options
         answer_ids = answers_df['id'].tolist()
-        
         selected_data = []
         for i in range(0, len(answer_ids), chunk_size):
             chunk = answer_ids[i:i + chunk_size]
-            chunk_result = supabase.table('answer_selected_options').select(
+            result = supabase.table('answer_selected_options').select(
                 'question_answer_id, option_id'
             ).in_('question_answer_id', chunk).execute()
-            selected_data.extend(chunk_result.data)
+            selected_data.extend(result.data)
         
         selected_df = pd.DataFrame(selected_data)
         
         # 6. Load options
         if not selected_df.empty:
             option_ids = selected_df['option_id'].unique().tolist()
-            
             options_data = []
             for i in range(0, len(option_ids), chunk_size):
                 chunk = option_ids[i:i + chunk_size]
-                chunk_result = supabase.table('question_options').select(
-                    'id, question_id, option_code, option_text'
+                result = supabase.table('question_options').select(
+                    'id, option_code, option_text'
                 ).in_('id', chunk).execute()
-                options_data.extend(chunk_result.data)
+                options_data.extend(result.data)
             
             options_df = pd.DataFrame(options_data)
         else:
             options_df = pd.DataFrame()
         
-        # 7. Merge to create answer-level dataframe
-        answers_merged = answers_df.merge(
-            questions_df, 
-            left_on='question_id', 
-            right_on='id', 
-            suffixes=('', '_q')
+        # 7. Build answer-level dataframe (CLEAN MERGES - NO DUPLICATE COLUMNS)
+        # Step 1: Rename to avoid conflicts
+        answers_clean = answers_df.rename(columns={'id': 'answer_id'})
+        questions_clean = questions_df.rename(columns={'id': 'q_id'})
+        
+        merged = answers_clean.merge(
+            questions_clean,
+            left_on='question_id',
+            right_on='q_id',
+            how='left'
         )
         
-        if not selected_df.empty and not options_df.empty:
-            answers_merged = answers_merged.merge(
-                selected_df,
-                left_on='id',
+        # Use external_id as question_id
+        merged['question_id'] = merged['external_id']
+        merged = merged.drop(columns=['q_id', 'external_id'], errors='ignore')
+        
+        # Step 2: Add selected options
+        if not selected_df.empty:
+            selected_clean = selected_df.rename(columns={'option_id': 'opt_id'})
+            
+            merged = merged.merge(
+                selected_clean,
+                left_on='answer_id',
                 right_on='question_answer_id',
                 how='left'
             )
             
-            answers_merged = answers_merged.merge(
-                options_df,
-                left_on='option_id',
-                right_on='id',
-                suffixes=('', '_opt'),
-                how='left'
-            )
-            
-            # Convert option_code to numeric score (0-4 scale)
-            answers_merged['score'] = pd.to_numeric(
-                answers_merged['option_code'], 
-                errors='coerce'
-            )
+            # Step 3: Add option details
+            if not options_df.empty:
+                options_clean = options_df.rename(columns={'id': 'option_pk'})
+                
+                merged = merged.merge(
+                    options_clean,
+                    left_on='opt_id',
+                    right_on='option_pk',
+                    how='left'
+                )
+        
+        # Convert option_code to score
+        if 'option_code' in merged.columns:
+            merged['score'] = pd.to_numeric(merged['option_code'], errors='coerce')
         else:
-            answers_merged['option_code'] = None
-            answers_merged['option_text'] = None
-            answers_merged['score'] = None
+            merged['score'] = None
         
-        # Clean column names
-        answers_merged = answers_merged.rename(columns={
-            'id': 'answer_id',
-            'external_id': 'question_id',  # Use external_id as question_id
-        })
+        # 8. Create student-level dataframe (AVOID DUPLICATE MERGES)
+        students_df = responses_df[['id', 'school_id']].copy()
         
-        # 8. Create student-level dataframe
-        students_df = responses_df.copy()
-        
-        # Add demographic variables
-        demo_questions = {
+        # Extract demographics
+        demo_map = {
             'survey_003_zero_general_curso': 'curso',
-            'survey_003_zero_general_edad': 'edad',
             'survey_003_zero_general_genero': 'genero',
-            'survey_003_zero_general_lengua': 'lengua_indigena',
-            'survey_003_zero_general_orientacion': 'orientacion',
-            'survey_003_zero_general_tiempo': 'tiempo_escuela',
-            'survey_003_zero_general_tipo_escuela': 'tipo_escuela',
         }
         
-        for ext_id, var_name in demo_questions.items():
-            demo_answers = answers_merged[
-                answers_merged['question_id'] == ext_id
-            ][['survey_response_id', 'option_text']].rename(
-                columns={'option_text': var_name}
-            )
+        for ext_id, col_name in demo_map.items():
+            # Drop duplicates BEFORE merge
+            demo_data = merged[merged['question_id'] == ext_id][
+                ['survey_response_id', 'option_text']
+            ].drop_duplicates('survey_response_id')
+            
+            # Rename to avoid conflicts
+            demo_data = demo_data.rename(columns={
+                'survey_response_id': 'resp_id',
+                'option_text': col_name
+            })
             
             students_df = students_df.merge(
-                demo_answers, 
-                left_on='id', 
-                right_on='survey_response_id', 
+                demo_data,
+                left_on='id',
+                right_on='resp_id',
                 how='left'
             )
             
-            if 'survey_response_id' in students_df.columns:
-                students_df = students_df.drop(columns=['survey_response_id'])
+            # Clean up temporary column
+            if 'resp_id' in students_df.columns:
+                students_df = students_df.drop(columns=['resp_id'])
         
-        return responses_df, answers_merged, students_df
+        return responses_df, merged, students_df
     
     except Exception as e:
         st.error(f"❌ Error loading data: {e}")
