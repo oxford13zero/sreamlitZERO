@@ -467,7 +467,7 @@ def main():
             'Cronbach α': f"{r.cronbach_alpha:.3f}" if not np.isnan(r.cronbach_alpha) else "—",
             'McDonald ω': f"{r.mcdonald_omega:.3f}" if not np.isnan(r.mcdonald_omega) else "—",
             'Rango Publicado': f"{r.published_alpha_range[0]:.2f}-{r.published_alpha_range[1]:.2f}" if r.published_alpha_range[0] > 0 else "—",
-            'Estado': '✅ Fiable' if r.alpha_meets_threshold else '⚠️ Bajo',
+            'Estado': 'Fiable' if r.alpha_meets_threshold else 'Bajo',
         })
     
     st.dataframe(pd.DataFrame(rel_data), use_container_width=True)
@@ -574,9 +574,9 @@ def main():
                 st.metric("V de Cramér", f"{comparison.cramers_v:.2f}")
             
             if comparison.is_significant:
-                st.success(f"✅ Diferencia estadísticamente significativa (p < {comparison.bonferroni_alpha:.4f})")
+                st.success(f" Diferencia estadísticamente significativa (p < {comparison.bonferroni_alpha:.4f})")
             else:
-                st.info(f"ℹ️ Diferencia no significativa (p ≥ {comparison.bonferroni_alpha:.4f})")
+                st.info(f" Diferencia no significativa (p ≥ {comparison.bonferroni_alpha:.4f})")
         else:
             st.warning("No hay suficientes datos para este análisis")
     else:
@@ -768,3 +768,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
