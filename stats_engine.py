@@ -360,46 +360,77 @@ def bonferroni_threshold(n_tests: int) -> float:
 # ITEM-LEVEL DESCRIPTIVES
 # ══════════════════════════════════════════════════════════════
 
-def item_descriptives(
-    answer_df: pd.DataFrame,
-    construct_items: List[str],
-    external_id_col: str = 'question_external_id'
-) -> pd.DataFrame:
+def item_descriptives(answer_df: pd.DataFrame, external_ids: List[str]) -> pd.DataFrame:
     """
     Calculate item-level descriptive statistics.
     
     Args:
-        answer_df: Answer-level DataFrame with scores
-        construct_items: List of external_ids for this construct
-        external_id_col: Column name for external_id
-        
+        answer_df: Answer-level DataFrame
+        external_ids: List of external_ids for items to analyze
+    
     Returns:
-        DataFrame with item statistics
+        DataFrame with columns: [item, mean, sd, pct_high_freq, n_answered, n_missing]
     """
-    mask = answer_df[external_id_col].isin(construct_items)
-    items = answer_df[mask][['question_id', 'question_text', 'score']].copy()
+    if answer_df is None or answer_df.empty or not external_ids:
+        return pd.DataFrame()
+    
+    # Find the question_id column (might be named differently)
+    question_col = None
+    for col in ['question_id', 'external_id', 'question_external_id']:
+        if col in answer_df.columns:
+            question_col = col
+            break
+    
+    if question_col is None:
+        st.warning("⚠️ Cannot find question_id column in answer_df")
+        return pd.DataFrame()
+    
+    # Filter to construct items
+    mask = answer_df[question_col].isin(external_ids)
+    items = answer_df[mask].copy()
     
     if items.empty:
         return pd.DataFrame()
     
+    # Get question text column
+    text_col = None
+    for col in ['question_text', 'text', 'question']:
+        if col in items.columns:
+            text_col = col
+            break
+    
+    if text_col is None:
+        text_col = question_col  # Fallback to question_id
+    
+    # Group by question
     rows = []
-    for (qid, qtext), grp in items.groupby(['question_id', 'question_text']):
-        s = grp['score'].dropna()
-        n_ans = int(len(s))
+    for qid in external_ids:
+        item_data = items[items[question_col] == qid]
+        
+        if item_data.empty:
+            continue
+        
+        scores = item_data['score'].dropna()
+        n_answered = len(scores)
+        n_missing = len(item_data) - n_answered
+        
+        # Get question text (first non-null value)
+        q_text = item_data[text_col].dropna().iloc[0] if len(item_data[text_col].dropna()) > 0 else qid
         
         rows.append({
-            'question_text': (str(qtext) or '')[:65],
-            'mean': round(float(s.mean()), 2) if n_ans > 0 else np.nan,
-            'sd': round(float(s.std(ddof=1)), 2) if n_ans > 1 else np.nan,
-            'pct_high_freq': round(
-                float((s >= HIGH_FREQ_THRESHOLD).mean() * 100), 1
-            ) if n_ans > 0 else np.nan,
-            'n_answered': n_ans,
-            'n_missing': int(grp['score'].isna().sum()),
+            'item': str(qid),
+            'question_text': str(q_text)[:80],
+            'mean': round(float(scores.mean()), 2) if n_answered > 0 else np.nan,
+            'sd': round(float(scores.std(ddof=1)), 2) if n_answered > 1 else np.nan,
+            'pct_high_freq': round(float((scores >= HIGH_FREQ_THRESHOLD).mean() * 100), 1) if n_answered > 0 else np.nan,
+            'n_answered': int(n_answered),
+            'n_missing': int(n_missing),
         })
     
-    return pd.DataFrame(rows).sort_values('pct_high_freq', ascending=False)
-
+    if not rows:
+        return pd.DataFrame()
+    
+    return pd.DataFrame(rows).sort_values('pct_high_freq', ascending=False, na_position='last')
 
 # ══════════════════════════════════════════════════════════════
 # CONSTRUCT CORRELATION MATRIX
