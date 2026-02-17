@@ -310,21 +310,60 @@ def main():
     # Sidebar
     with st.sidebar:
         st.header("⚙️ Configuración")
+    
+        # Get school info from database
+        if students_df is not None and not students_df.empty and 'school_id' in students_df.columns:
+            school_id = students_df['school_id'].iloc[0]
         
-        school_name = st.text_input(
+        # Load school details
+            try:
+                school_data = supabase.table('schools').select(
+                    'name, encargado_escolar'
+                ).eq('id', school_id).execute()
+            
+                if school_data.data:
+                    school_name = school_data.data[0].get('name', 'Sin nombre')
+                    encargado = school_data.data[0].get('encargado_escolar', 'No asignado')
+                else:
+                    school_name = "Escuela sin nombre"
+                    encargado = "No asignado"
+            except:
+                school_name = "Escuela Secundaria Federal"
+                encargado = "No disponible"
+        else:
+            school_name = "Escuela Secundaria Federal"
+            encargado = "No disponible"
+    
+        # Display (read-only)
+        st.text_input(
             "Nombre de la Escuela",
-            value="Escuela Secundaria Federal",
-            help="Aparecerá en reportes (cuando se habilite)"
+            value=school_name,
+            disabled=True,  # Read-only
+            help="Cargado desde la base de datos"
         )
-        
+    
+        st.text_input(
+            "Encargado Escolar",
+            value=encargado,
+            disabled=True,
+            help="Responsable del centro educativo"
+        )
+    
         st.markdown("---")
         st.markdown("**📊 Encuesta:** SURVEY_003")
         st.markdown("**💾 Base de Datos:** Supabase")
         st.markdown("**📈 Versión:** 3.0")
-        
         if st.button("🔄 Recargar Datos"):
             st.cache_data.clear()
             st.rerun()
+
+
+
+
+
+
+
+
     
     # Load data
     with st.spinner("Cargando datos..."):
@@ -660,3 +699,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
