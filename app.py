@@ -392,9 +392,9 @@ with st.sidebar:
         st.markdown("**💾 Base de Datos:** Supabase")
         st.markdown("**📈 Versión:** 3.0")
     
-    if st.button("🔄 Recargar Datos"):
-        st.cache_data.clear()
-        st.rerun()
+if st.button("🔄 Recargar Datos"):
+            st.cache_data.clear()
+            st.rerun()
 
 
 
@@ -733,6 +733,7 @@ with st.sidebar:
 
 if __name__ == "__main__":
     main()
+
 
 
 
