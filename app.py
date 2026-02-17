@@ -373,24 +373,24 @@ with st.sidebar:
             st.rerun()
     
     # Display (read-only)
-    st.text_input(
-        "🏫 Nombre de la Escuela",
-        value=school_name,
-        disabled=True,
-        help="Cargado desde la base de datos"
-    )
+        st.text_input(
+            "🏫 Nombre de la Escuela",
+            value=school_name,
+            disabled=True,
+            help="Cargado desde la base de datos"
+        )
     
-    st.text_input(
-        "👤 Encargado Escolar",
-        value=encargado,
-        disabled=True,
-        help="Responsable del centro educativo"
-    )
+        st.text_input(
+            "👤 Encargado Escolar",
+            value=encargado,
+            disabled=True,
+            help="Responsable del centro educativo"
+        )
     
-    st.markdown("---")
-    st.markdown("**📊 Encuesta:** SURVEY_003")
-    st.markdown("**💾 Base de Datos:** Supabase")
-    st.markdown("**📈 Versión:** 3.0")
+        st.markdown("---")
+        st.markdown("**📊 Encuesta:** SURVEY_003")
+        st.markdown("**💾 Base de Datos:** Supabase")
+        st.markdown("**📈 Versión:** 3.0")
     
     if st.button("🔄 Recargar Datos"):
         st.cache_data.clear()
@@ -733,6 +733,7 @@ with st.sidebar:
 
 if __name__ == "__main__":
     main()
+
 
 
 
