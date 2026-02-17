@@ -317,31 +317,30 @@ def main():
 
         
         # Get school info from database
-        if students_df is not None and not students_df.empty and 'school_id' in students_df.columns:
-            school_id = students_df['school_id'].iloc[0]
+    if students_df is not None and not students_df.empty and 'school_id' in students_df.columns:
+        school_id = students_df['school_id'].iloc[0]
         
-            # Load school name
-            try:
-                school_data = supabase.table('schools').select('name').eq('id', school_id).execute()
-                school_name = school_data.data[0]['name'] if school_data.data else "Escuela sin nombre"
-            except:
-                school_name = "Escuela Secundaria Federal"
+        # Load school name
+        try:
+            school_data = supabase.table('schools').select('name').eq('id', school_id).execute()
+            school_name = school_data.data[0]['name'] if school_data.data else "Escuela sin nombre"
+        except:
+            school_name = "Escuela Secundaria Federal"
         
-            # Load encargado for this school
-            try:
-                encargado_data = supabase.table('encargado_escolar').select(
-                    'first_name, pat_last_name, mat_last_name'
+        # Load encargado for this school
+        try:
+        encargado_data = supabase.table('encargado_escolar').select('first_name, pat_last_name, mat_last_name'
                 ).eq('school_id', school_id).execute()
             
-                if encargado_data.data:
-                    enc = encargado_data.data[0]
-                    first = enc.get('first_name', '')
-                    pat = enc.get('pat_last_name', '')
-                    mat = enc.get('mat_last_name', '')
-                    encargado = f"{first} {pat} {mat}".strip()
-                else:
-                    encargado = "No asignado"
-            except:
+        if encargado_data.data:
+            enc = encargado_data.data[0]
+            first = enc.get('first_name', '')
+            pat = enc.get('pat_last_name', '')
+            mat = enc.get('mat_last_name', '')
+            encargado = f"{first} {pat} {mat}".strip()
+        else:
+            encargado = "No asignado"
+        except:
                 encargado = "No disponible"
         else:
             school_name = "Escuela Secundaria Federal"
@@ -718,4 +717,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
