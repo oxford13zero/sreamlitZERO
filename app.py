@@ -298,7 +298,6 @@ def calculate_construct_scores(answers_df, students_df):
 # ══════════════════════════════════════════════════════════════
 # MAIN DASHBOARD
 # ══════════════════════════════════════════════════════════════
-
 def main():
     """Main Streamlit application"""
     
@@ -307,41 +306,63 @@ def main():
     st.markdown("**Encuesta de Clima Escolar, Bullying y Cyberbullying**")
     st.markdown("---")
     
-    # Sidebar
-    with st.sidebar:
-        st.header("⚙️ Configuración")
-        
-        school_name = st.text_input(
-            "Nombre de la Escuela",
-            value="Escuela Secundaria Federal",
-            help="Aparecerá en reportes (cuando se habilite)"
-        )
-        
-        st.markdown("---")
-        st.markdown("**📊 Encuesta:** SURVEY_003")
-        st.markdown("**💾 Base de Datos:** Supabase")
-        st.markdown("**📈 Versión:** 3.0")
-        
-        if st.button("🔄 Recargar Datos"):
-            st.cache_data.clear()
-            st.rerun()
-    
-    # Load data
+    # ══════════════════════════════════════════════════════════════
+    # 1️⃣ LOAD DATA FIRST
+    # ══════════════════════════════════════════════════════════════
     with st.spinner("Cargando datos..."):
         responses_df, answers_df, students_df = load_survey_data()
     
     if responses_df is None or answers_df is None or students_df is None:
-        st.error("❌ No se pudieron cargar los datos. Verifica la configuración.")
+        st.error("❌ No se pudieron cargar los datos.")
         return
     
     # Calculate construct scores
     students_df = calculate_construct_scores(answers_df, students_df)
-    
-    # Get all external IDs
     all_external_ids = answers_df['question_id'].unique().tolist()
-    
-    # Validate coverage
     coverage = validate_construct_coverage(all_external_ids)
+    
+    # ══════════════════════════════════════════════════════════════
+    # 2️⃣ NOW BUILD SIDEBAR (data is available)
+    # ══════════════════════════════════════════════════════════════
+    with st.sidebar:
+        st.header("⚙️ Configuración")
+        
+        # Now students_df exists and has data
+        if 'school_id' in students_df.columns:
+            school_id = students_df['school_id'].iloc[0]
+            
+            try:
+                school_data = supabase.table('schools').select('name').eq('id', school_id).execute()
+                school_name = school_data.data[0]['name'] if school_data.data else "Escuela sin nombre"
+            except:
+                school_name = "Escuela Secundaria Federal"
+            
+            try:
+                encargado_data = supabase.table('encargado_escolar').select(
+                    'first_name, pat_last_name, mat_last_name'
+                ).eq('school_id', school_id).execute()
+                
+                if encargado_data.data:
+                    enc = encargado_data.data[0]
+                    encargado = f"{enc.get('first_name', '')} {enc.get('pat_last_name', '')} {enc.get('mat_last_name', '')}".strip()
+                else:
+                    encargado = "No asignado"
+            except:
+                encargado = "No disponible"
+        else:
+            school_name = "Escuela Secundaria Federal"
+            encargado = "No disponible"
+        
+        st.text_input("🏫 Nombre de la Escuela", value=school_name, disabled=True)
+        st.text_input("👤 Encargado Escolar", value=encargado, disabled=True)
+        
+        st.markdown("---")
+        st.markdown("**📊 Encuesta:** SURVEY_003")
+        st.markdown("**💾 Base de Datos:** Supabase")
+        
+        if st.button("🔄 Recargar Datos"):
+            st.cache_data.clear()
+            st.rerun()
     
     # ════════════════════════════════════════════════════════════
     # SECTION 1: OVERVIEW (KPIs)
@@ -660,3 +681,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
