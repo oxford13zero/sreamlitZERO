@@ -339,6 +339,22 @@ def calculate_construct_scores(answers_df, students_df):
 
 def main():
     """Main Streamlit application"""
+
+    # Primero cargar datos
+    responses_df = load_survey_data()
+
+    # Luego usar responses_df
+    if responses_df is not None and not responses_df.empty and 'school_id' in responses_df.columns:
+        school_id = responses_df['school_id'].iloc[0]
+        school_name, encargado = load_school_info(school_id)
+    else:
+        school_name = "Escuela no disponible"
+        encargado = "No disponible"
+
+    # Mostrar en sidebar
+    st.sidebar.markdown(f"### 🏫 {school_name}")
+    st.sidebar.markdown(f"**Encargado Escolar:** {encargado}")
+
     
     # Header
     st.title("🏫 TECH4ZERO-MX v1.0")
@@ -718,6 +734,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
