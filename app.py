@@ -356,9 +356,9 @@ def main():
                 encargado = "No asignado"
         except:
             encargado = "No disponible"
-    else:
-        school_name = "Escuela Secundaria Federal"
-        encargado = "No disponible"
+            else:
+                school_name = "Escuela Secundaria Federal"
+                encargado = "No disponible"
     
     # Display (read-only)
     st.text_input(
@@ -719,5 +719,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
