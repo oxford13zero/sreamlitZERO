@@ -329,7 +329,7 @@ def main():
         
         # Load encargado for this school
         try:
-        encargado_data = supabase.table('encargado_escolar').select('first_name, pat_last_name, mat_last_name'
+            encargado_data = supabase.table('encargado_escolar').select('first_name, pat_last_name, mat_last_name'
                 ).eq('school_id', school_id).execute()
             
         if encargado_data.data:
@@ -717,5 +717,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
