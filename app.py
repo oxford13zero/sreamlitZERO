@@ -326,14 +326,14 @@ def main():
     #        st.cache_data.clear()
     #        st.rerun()
 
-with st.sidebar:
-    st.header("⚙️ Configuración")
+    with st.sidebar:
+        st.header("⚙️ Configuración")
     
     # Get school info from database
-    if students_df is not None and not students_df.empty and 'school_id' in students_df.columns:
-        school_id = students_df['school_id'].iloc[0]
+        if students_df is not None and not students_df.empty and 'school_id' in students_df.columns:
+            school_id = students_df['school_id'].iloc[0]
         
-        # Load school name
+    # Load school name
         try:
             school_data = supabase.table('schools').select('name').eq('id', school_id).execute()
             school_name = school_data.data[0]['name'] if school_data.data else "Escuela sin nombre"
@@ -719,4 +719,5 @@ with st.sidebar:
 
 if __name__ == "__main__":
     main()
+
 
