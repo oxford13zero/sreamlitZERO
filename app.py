@@ -80,27 +80,43 @@ SURVEY_CODE = "SURVEY_003"
 # ══════════════════════════════════════════════════════════════
 
 @st.cache_data(ttl=300)
-def load_survey_data():
-    """Load all survey data from Supabase."""
+@st.cache_data(ttl=300)
+def load_survey_data(school_id=None, analysis_dt=None):
+    """
+    Load all survey data from Supabase.
+    
+    Args:
+        school_id: Filter by specific school
+        analysis_dt: Filter by specific analysis date
+    """
     try:
-        # 1. Get survey ID
+        # Get survey ID
         survey_result = supabase.table('surveys').select('id').eq('code', SURVEY_CODE).execute()
         
         if not survey_result.data:
-            st.warning(f"⚠️ Survey {SURVEY_CODE} not found")
+            st.warning(f"Survey {SURVEY_CODE} not found")
             return None, None, None
         
         survey_id = survey_result.data[0]['id']
         
-        # 2. Load responses (submitted only)
-        responses = supabase.table('survey_responses').select(
-            'id, survey_id, school_id, student_external_id, status'
-        ).eq('survey_id', survey_id).eq('status', 'submitted').execute()
+        #  Build query with filters
+        query = supabase.table('survey_responses').select(
+            'id, survey_id, school_id, student_external_id, status, analysis_requested_dt'
+        ).eq('survey_id', survey_id).eq('status', 'submitted')
         
+        #  Filter by school_id if provided
+        if school_id:
+            query = query.eq('school_id', school_id)
+        
+        #  Filter by analysis_requested_dt if provided
+        if analysis_dt:
+            query = query.eq('analysis_requested_dt', analysis_dt)
+        
+        responses = query.execute()
         responses_df = pd.DataFrame(responses.data)
         
         if responses_df.empty:
-            st.warning(f"⚠️ No submitted responses for {SURVEY_CODE}")
+            st.warning(f" No submitted responses found for this analysis")
             return None, None, None
         
         response_ids = responses_df['id'].tolist()
@@ -119,6 +135,12 @@ def load_survey_data():
         
         if answers_df.empty:
             return responses_df, None, None
+        
+ 
+
+
+
+        
         
         # 4. Load questions
         question_ids = answers_df['question_id'].unique().tolist()
@@ -301,42 +323,64 @@ def calculate_construct_scores(answers_df, students_df):
 def main():
     """Main Streamlit application"""
     
-    # Header
     st.title("🏫 TECH4ZERO-MX v1.0")
     st.markdown("**Encuesta de Clima Escolar, Bullying y Cyberbullying**")
     st.markdown("---")
     
-    # ══════════════════════════════════════════════════════════════
-    # 1️⃣ LOAD DATA FIRST
-    # ══════════════════════════════════════════════════════════════
+    #  Get URL parameters
+    params = st.query_params
+    url_school_id = params.get('school_id')
+    url_analysis_dt = params.get('analysis_dt')
+    
+    # Convert school_id to integer if provided
+    if url_school_id:
+        try:
+            url_school_id = int(url_school_id)
+        except:
+            url_school_id = None
+    
+    # Show analysis info
+    if url_analysis_dt:
+        st.info(f"📊 Mostrando análisis específico del: {url_analysis_dt}")
+    
+    #  Load data with BOTH filters
     with st.spinner("Cargando datos..."):
-        responses_df, answers_df, students_df = load_survey_data()
+        responses_df, answers_df, students_df = load_survey_data(
+            school_id=url_school_id,
+            analysis_dt=url_analysis_dt
+        )
     
     if responses_df is None or answers_df is None or students_df is None:
-        st.error("❌ No se pudieron cargar los datos.")
+        st.error("❌ No se pudieron cargar los datos para este análisis.")
         return
+    
+    # Show metrics for this specific analysis
+    st.success(f"✅ Datos cargados: {len(students_df)} estudiantes en este análisis")
     
     # Calculate construct scores
     students_df = calculate_construct_scores(answers_df, students_df)
+    
+    # Get all external IDs
     all_external_ids = answers_df['question_id'].unique().tolist()
+    
+    # Validate coverage
     coverage = validate_construct_coverage(all_external_ids)
     
-    # ══════════════════════════════════════════════════════════════
-    # 2️⃣ NOW BUILD SIDEBAR (data is available)
-    # ══════════════════════════════════════════════════════════════
+    # Build sidebar (data is already loaded)
     with st.sidebar:
         st.header("⚙️ Configuración")
         
-        # Now students_df exists and has data
         if 'school_id' in students_df.columns:
             school_id = students_df['school_id'].iloc[0]
             
+            # Load school name
             try:
                 school_data = supabase.table('schools').select('name').eq('id', school_id).execute()
                 school_name = school_data.data[0]['name'] if school_data.data else "Escuela sin nombre"
             except:
                 school_name = "Escuela Secundaria Federal"
             
+            # Load encargado
             try:
                 encargado_data = supabase.table('encargado_escolar').select(
                     'first_name, pat_last_name, mat_last_name'
@@ -355,6 +399,12 @@ def main():
         
         st.text_input("🏫 Nombre de la Escuela", value=school_name, disabled=True)
         st.text_input("👤 Encargado Escolar", value=encargado, disabled=True)
+        
+        # Show which analysis is being displayed
+        if url_analysis_dt:
+            st.markdown("---")
+            st.markdown("**📊 Análisis Mostrado:**")
+            st.code(url_analysis_dt)
         
         st.markdown("---")
         st.markdown("**📊 Encuesta:** SURVEY_003")
@@ -681,4 +731,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
