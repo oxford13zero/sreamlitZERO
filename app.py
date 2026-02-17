@@ -311,19 +311,19 @@ def main():
     with st.sidebar:
         st.header("⚙️ Configuración")
         # Get school info from database
-        if students_df is not None and not students_df.empty and 'school_id' in students_df.columns:
-            school_id = students_df['school_id'].iloc[0]
-        else:
-            school_name = "Escuela Secundaria Federal"
-            encargado = "No disponible"   
+        #if students_df is not None and not students_df.empty and 'school_id' in students_df.columns:
+        #    school_id = students_df['school_id'].iloc[0]
+        #else:
+        #    school_name = "Escuela Secundaria Federal"
+        #    encargado = "No disponible"   
 
 
         
-        #school_name = st.text_input(
-        #    "Nombre de la Escuela",
-        #    value="Escuela Secundaria Federal",
-        #    help="Aparecerá en reportes (cuando se habilite)"
-        #)
+        school_name = st.text_input(
+            "Nombre de la Escuela",
+            value="Escuela Secundaria Federal",
+            help="Aparecerá en reportes (cuando se habilite)"
+        )
 
 
 
@@ -676,4 +676,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
