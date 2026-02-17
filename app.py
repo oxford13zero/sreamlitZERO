@@ -332,14 +332,14 @@ def main():
             encargado_data = supabase.table('encargado_escolar').select('first_name, pat_last_name, mat_last_name'
                 ).eq('school_id', school_id).execute()
             
-        if encargado_data.data:
-            enc = encargado_data.data[0]
-            first = enc.get('first_name', '')
-            pat = enc.get('pat_last_name', '')
-            mat = enc.get('mat_last_name', '')
-            encargado = f"{first} {pat} {mat}".strip()
-        else:
-            encargado = "No asignado"
+            if encargado_data.data:
+                enc = encargado_data.data[0]
+                first = enc.get('first_name', '')
+                pat = enc.get('pat_last_name', '')
+                mat = enc.get('mat_last_name', '')
+                encargado = f"{first} {pat} {mat}".strip()
+            else:
+                encargado = "No asignado"
         except:
                 encargado = "No disponible"
         else:
@@ -717,6 +717,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
