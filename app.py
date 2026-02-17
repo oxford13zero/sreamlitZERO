@@ -242,6 +242,44 @@ def load_survey_data():
         import traceback
         st.code(traceback.format_exc())
         return None, None, None
+        
+# ══════════════════════════════════════════════════════════════
+# PULLING SCHOOL AND RESPONSIBLE
+# ══════════════════════════════════════════════════════════════
+@st.cache_data(ttl=300)
+def load_school_info(school_id):
+    """Load school name and encargado from Supabase."""
+    try:
+        # Obtener nombre de la escuela
+        school_result = supabase.table('schools') \
+            .select('name') \
+            .eq('id', school_id) \
+            .execute()
+
+        if not school_result.data:
+            return "Escuela no encontrada", "No disponible"
+
+        school_name = school_result.data[0]['name']
+
+        # Obtener encargado escolar
+        enc_result = supabase.table('encargado_escolar') \
+            .select('first_name, pat_last_name, mat_last_name') \
+            .eq('school_id', school_id) \
+            .execute()
+
+        if enc_result.data:
+            enc = enc_result.data[0]
+            encargado_nombre = f"{enc['first_name']} {enc['pat_last_name']} {enc['mat_last_name']}"
+        else:
+            encargado_nombre = "No asignado"
+
+        return school_name, encargado_nombre
+
+    except Exception as e:
+        st.error(f"Error loading school info: {e}")
+        return "Error", "Error"
+
+
 
 
 # ══════════════════════════════════════════════════════════════
@@ -317,13 +355,17 @@ def main():
         #    school_name = "Escuela Secundaria Federal"
         #    encargado = "No disponible"   
 
-
         
-        school_name = st.text_input(
-            "Nombre de la Escuela",
-            value="Escuela Secundaria Federal",
-            help="Aparecerá en reportes (cuando se habilite)"
-        )
+        # Load school info dynamically
+        if responses_df is not None and not responses_df.empty and 'school_id' in responses_df.columns:
+            school_id = responses_df['school_id'].iloc[0]
+            school_name, encargado = load_school_info(school_id)
+        else:
+            school_name = "Escuela no disponible"
+            encargado = "No disponible"
+
+        st.markdown(f"### 🏫 {school_name}")
+        st.markdown(f"**Encargado Escolar:** {encargado}")
 
 
 
@@ -676,5 +718,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
