@@ -309,7 +309,7 @@ def main():
     
     # Sidebar
     with st.sidebar:
-       st.header("⚙️ Configuración")
+        st.header("⚙️ Configuración")
         
         school_name = st.text_input(
             "Nombre de la Escuela",
@@ -325,9 +325,6 @@ def main():
         if st.button("🔄 Recargar Datos"):
             st.cache_data.clear()
             st.rerun()
-
-
-
     
     # Load data
     with st.spinner("Cargando datos..."):
@@ -663,9 +660,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
