@@ -100,9 +100,16 @@ def load_survey_data(school_id=None, analysis_dt=None):
         survey_id = survey_result.data[0]['id']
         
         #  Build query with filters
+
+        # Get all active survey IDs dynamically
+        active_surveys = supabase.table('surveys').select('id').eq('is_active', True).execute()
+        survey_ids = [s['id'] for s in active_surveys.data] if active_surveys.data else []
+
+        # Load responses for all active surveys 02202026
+        
         query = supabase.table('survey_responses').select(
             'id, survey_id, school_id, student_external_id, status, analysis_requested_dt'
-        ).eq('survey_id', survey_id).eq('status', 'submitted')
+        ).eq('survey_id', survey_ids).eq('status', 'submitted')
         
         #  Filter by school_id if provided
         if school_id:
@@ -731,5 +738,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
