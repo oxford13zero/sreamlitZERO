@@ -99,42 +99,43 @@ def load_survey_data(school_id=None, analysis_dt=None):
         
         survey_id = survey_result.data[0]['id']
         
-        #  Build query with filters
-
         # Get all active survey IDs dynamically
         active_surveys = supabase.table('surveys').select('id').eq('is_active', True).execute()
-        survey_ids = [s['id'] for s in active_surveys.data] if active_surveys.data else []
 
+        if not active_surveys.data:
+            st.error("❌ No active surveys found in database")
+            return None, None, None
+
+        survey_ids = [str(s['id']) for s in active_surveys.data]
         print(f"📋 Survey IDs: {survey_ids}")
         print(f"📋 Type: {type(survey_ids)}")
         print(f"📋 First ID type: {type(survey_ids[0]) if survey_ids else 'empty'}")
 
-
-        
-
-        # Load responses for all active surveys 02202026
-        
+        # Build query step by step
         query = supabase.table('survey_responses').select(
             'id, survey_id, school_id, student_external_id, status, analysis_requested_dt'
-        ).eq('survey_id', survey_ids).eq('status', 'submitted')
-        
-        #  Filter by school_id if provided
+        ).eq('status', 'submitted')
+
+        # Filter by school_id if provided
         if school_id:
             query = query.eq('school_id', school_id)
-        
-        #  Filter by analysis_requested_dt if provided
+
+        # Filter by analysis_requested_dt if provided
         if analysis_dt:
             query = query.eq('analysis_requested_dt', analysis_dt)
-        
+
+        # Filter by active survey IDs (apply .in_() AFTER other filters)
+            query = query.in_('survey_id', survey_ids)
+
         responses = query.execute()
         responses_df = pd.DataFrame(responses.data)
-        
+
         if responses_df.empty:
-            st.warning(f" No submitted responses found for this analysis")
+            st.warning(f"⚠️ No submitted responses found for this analysis")
             return None, None, None
-        
+
         response_ids = responses_df['id'].tolist()
-        
+
         # 3. Load answers (chunked)
         answers_data = []
         chunk_size = 100
@@ -144,9 +145,9 @@ def load_survey_data(school_id=None, analysis_dt=None):
                 'id, survey_response_id, question_id'
             ).in_('survey_response_id', chunk).execute()
             answers_data.extend(result.data)
-        
+
         answers_df = pd.DataFrame(answers_data)
-        
+
         if answers_df.empty:
             return responses_df, None, None
         
@@ -745,6 +746,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
