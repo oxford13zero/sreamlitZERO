@@ -105,6 +105,13 @@ def load_survey_data(school_id=None, analysis_dt=None):
         active_surveys = supabase.table('surveys').select('id').eq('is_active', True).execute()
         survey_ids = [s['id'] for s in active_surveys.data] if active_surveys.data else []
 
+        print(f"📋 Survey IDs: {survey_ids}")
+        print(f"📋 Type: {type(survey_ids)}")
+        print(f"📋 First ID type: {type(survey_ids[0]) if survey_ids else 'empty'}")
+
+
+        
+
         # Load responses for all active surveys 02202026
         
         query = supabase.table('survey_responses').select(
@@ -738,6 +745,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
