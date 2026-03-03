@@ -34,6 +34,7 @@ from stats_engine import (
     bonferroni_threshold,
     item_descriptives,
     construct_correlation_matrix,
+    construct_correlation_pvalues,
     missing_pattern_summary,
     run_cfa,
     classify_bully_victim_typology,
@@ -899,12 +900,8 @@ def main():
     
     st.header("🔗 6. Correlaciones entre Constructos (Spearman)")
     
-    corr_result = construct_correlation_matrix(students_df, substantive_constructs)
-    
-    if isinstance(corr_result, tuple):
-        corr_matrix, p_matrix = corr_result
-    else:
-        corr_matrix, p_matrix = corr_result, pd.DataFrame()
+    corr_matrix = construct_correlation_matrix(students_df, substantive_constructs)
+    p_matrix    = construct_correlation_pvalues(students_df, substantive_constructs)
     
     if not corr_matrix.empty:
         fig = plot_correlation_heatmap(corr_matrix)
