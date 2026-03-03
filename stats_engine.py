@@ -892,46 +892,51 @@ def compare_subgroups(student_df, outcome_col, grouping_col, n_total_tests=1):
 
 def construct_correlation_matrix(student_df, constructs):
     """
-    Calculate Spearman rank correlations between construct sum scores,
-    paired with a matrix of two-tailed p-values.
+    Calculate Spearman rank correlations between construct sum scores.
 
-    Spearman is required because construct sum scores are ordinal
-    composites of 0–4 frequency items — not continuous/normal data.
+    Returns a single pd.DataFrame (rho matrix) for backward compatibility
+    with visualization.py / plot_correlation_heatmap().
 
-    Returns:
-        Tuple[pd.DataFrame, pd.DataFrame]: (rho_matrix, pvalue_matrix)
-        Both DataFrames share the same index/columns (construct names).
-        Returns (empty, empty) if fewer than 2 constructs have data.
+    Spearman is used because construct sum scores are ordinal composites
+    of 0-4 frequency items. For p-values use construct_correlation_pvalues().
     """
     score_cols = [f'{c}_sum' for c in constructs if f'{c}_sum' in student_df.columns]
 
     if len(score_cols) < 2:
-        return pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame()
 
-    data = student_df[score_cols].dropna()
-    n_cols = len(score_cols)
     labels = [c.replace('_sum', '') for c in score_cols]
+    rho = student_df[score_cols].corr(method='spearman')
+    rho.columns = labels
+    rho.index   = labels
+    return rho
 
-    # Build rho and p-value matrices manually via scipy.spearmanr
-    rho_matrix = np.full((n_cols, n_cols), np.nan)
-    p_matrix   = np.full((n_cols, n_cols), np.nan)
 
-    for i in range(n_cols):
-        for j in range(n_cols):
+def construct_correlation_pvalues(student_df, constructs):
+    """
+    Calculate two-tailed Spearman p-values between construct sum scores.
+    Returns empty DataFrame if fewer than 2 constructs have data.
+    """
+    score_cols = [f'{c}_sum' for c in constructs if f'{c}_sum' in student_df.columns]
+
+    if len(score_cols) < 2:
+        return pd.DataFrame()
+
+    labels = [c.replace('_sum', '') for c in score_cols]
+    data   = student_df[score_cols].dropna()
+    n      = len(score_cols)
+    mat    = np.full((n, n), np.nan)
+
+    for i in range(n):
+        for j in range(n):
             if i == j:
-                rho_matrix[i, j] = 1.0
-                p_matrix[i, j]   = 0.0
+                mat[i, j] = 0.0
             elif j > i:
-                x = data.iloc[:, i]
-                y = data.iloc[:, j]
-                rho, pval = scipy_stats.spearmanr(x, y)
-                rho_matrix[i, j] = rho_matrix[j, i] = round(float(rho), 3)
-                p_matrix[i, j]   = p_matrix[j, i]   = round(float(pval), 4)
+                _, pval = scipy_stats.spearmanr(data.iloc[:, i], data.iloc[:, j])
+                mat[i, j] = mat[j, i] = round(float(pval), 4)
 
-    rho_df = pd.DataFrame(rho_matrix, index=labels, columns=labels)
-    p_df   = pd.DataFrame(p_matrix,   index=labels, columns=labels)
+    return pd.DataFrame(mat, index=labels, columns=labels)
 
-    return rho_df, p_df
 
 
 def missing_pattern_summary(
