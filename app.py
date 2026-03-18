@@ -130,7 +130,7 @@ def load_survey_data(school_id=None, analysis_dt=None):
             query = query.eq('analysis_requested_dt', analysis_dt)
 
         # Filter by active survey IDs (apply .in_() AFTER other filters)
-            query = query.in_('survey_id', survey_ids)
+        query = query.in_('survey_id', survey_ids)
 
         responses = query.execute()
         responses_df = pd.DataFrame(responses.data)
@@ -250,10 +250,11 @@ def load_survey_data(school_id=None, analysis_dt=None):
         
         # Extract demographics
         demo_map = {
-            'survey_004_zero_general_grado':  'grado',
-            'survey_004_zero_general_genero': 'genero',
-            'survey_004_zero_general_edad':   'edad',
-            'survey_004_zero_general_lengua': 'lengua_indigena',
+            'zero_general_genero_v2':        'genero',
+            'zero_general_edad_v2':          'edad',
+            'zero_general_lengua_v2':        'lengua_indigena',
+            'zero_general_tiempo_v2':        'tiempo',
+            'zero_general_tipo_escuela_v2':  'tipo_escuela',
         }
         
         for ext_id, col_name in demo_map.items():
