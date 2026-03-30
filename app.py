@@ -1088,7 +1088,7 @@ def main():
                 st.write(f"❌ `{col}`: no existe")
         
         st.markdown("**Sample de question_ids en answers_df:**")
-        st.write(answers_df['question_id'].unique().tolist()[:30])
+        st.write(sorted(answers_df['question_id'].unique().tolist()))
     # ── FIN DIAGNÓSTICO ──────────────────────────────────────────
 
     
