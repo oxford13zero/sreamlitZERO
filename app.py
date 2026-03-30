@@ -1062,6 +1062,37 @@ def main():
     # Banner (sidebar + main area) when subsample is active
     show_filter_banner(len(filtered_df), len(students_df), filter_selections)
 
+    # ── DIAGNÓSTICO TEMPORAL v3.2 — borrar después ──────────────
+    with st.expander("🔧 DEBUG — Estado de columnas y datos"):
+        st.markdown("**Columnas _freq y _sum en filtered_df:**")
+        freq_cols = [c for c in filtered_df.columns if '_freq' in c]
+        sum_cols  = [c for c in filtered_df.columns if '_sum' in c]
+        st.write("_freq:", freq_cols)
+        st.write("_sum: ", sum_cols)
+    
+        st.markdown("**Variables demográficas disponibles:**")
+        demo_check = ['genero', 'edad', 'tipo_escuela', 'lengua_indigena', 'grado']
+        for d in demo_check:
+            if d in filtered_df.columns:
+                st.write(f"✅ `{d}`: {filtered_df[d].dropna().unique().tolist()}")
+            else:
+                st.write(f"❌ `{d}`: no existe")
+    
+        st.markdown("**Columnas victimizacion y cybervictimizacion:**")
+        for col in ['victimizacion_freq', 'cybervictimizacion_freq', 
+                    'victimizacion_sum', 'cybervictimizacion_sum']:
+            if col in filtered_df.columns:
+                vals = filtered_df[col].dropna()
+                st.write(f"✅ `{col}`: n={len(vals)}, True={vals.sum() if vals.dtype==bool else 'N/A'}")
+            else:
+                st.write(f"❌ `{col}`: no existe")
+        
+        st.markdown("**Sample de question_ids en answers_df:**")
+        st.write(answers_df['question_id'].unique().tolist()[:30])
+    # ── FIN DIAGNÓSTICO ──────────────────────────────────────────
+
+    
+
     # NOTE: Do NOT call calculate_construct_scores() again here.
     # students_df already has all _sum / _freq columns computed above.
     # apply_sidebar_filters() row-filters students_df into filtered_df,
