@@ -1062,9 +1062,12 @@ def main():
     # Banner (sidebar + main area) when subsample is active
     show_filter_banner(len(filtered_df), len(students_df), filter_selections)
 
-    # Recalculate construct scores on the filtered subset
-    # (needed so prevalence, KPIs, etc. reflect the active filter)
-    filtered_df = calculate_construct_scores(filtered_answers_df, filtered_df)
+    # NOTE: Do NOT call calculate_construct_scores() again here.
+    # students_df already has all _sum / _freq columns computed above.
+    # apply_sidebar_filters() row-filters students_df into filtered_df,
+    # so each student's scores are already correct. A second call would
+    # produce duplicate columns (_freq_x / _freq_y) that break all
+    # prevalence lookups silently.
 
     all_external_ids_filtered = (
         filtered_answers_df['question_id'].unique().tolist()
@@ -1206,6 +1209,15 @@ def main():
     if prevalence_data:
         fig = plot_prevalence_plotly(prevalence_data, get_construct_metadata)
         st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.warning("No hay datos de prevalencia disponibles.")
+        with st.expander("🔧 Diagnóstico (para desarrolladores)"):
+            freq_cols = [c for c in filtered_df.columns if c.endswith('_freq')]
+            sum_cols  = [c for c in filtered_df.columns if c.endswith('_sum')]
+            st.write(f"**Columnas _freq encontradas:** `{freq_cols}`")
+            st.write(f"**Columnas _sum encontradas:** `{sum_cols}`")
+            st.write(f"**Constructos esperados:** `{substantive_constructs}`")
+            st.write(f"**Todas las columnas de filtered_df:** `{filtered_df.columns.tolist()}`")
 
     prev_table = []
     for construct, prev in prevalence_data.items():
@@ -1397,7 +1409,9 @@ def main():
     )
 
     if construct_selector:
-        items = get_construct_items(construct_selector, all_external_ids_filtered)
+        # Use full external IDs list — items are defined by the instrument,
+        # not by which questions happen to appear in the filtered subsample.
+        items = get_construct_items(construct_selector, all_external_ids)
         item_data = item_descriptives(filtered_answers_df, list(items))
 
         if not item_data.empty:
@@ -1406,6 +1420,10 @@ def main():
             st.dataframe(item_data, use_container_width=True)
         else:
             st.warning("No hay datos de ítems disponibles")
+            with st.expander("🔧 Diagnóstico (para desarrolladores)"):
+                st.write(f"Ítems buscados: `{items}`")
+                st.write(f"question_ids en filtered_answers_df: `{filtered_answers_df['question_id'].unique().tolist()[:20]}`")
+                st.write(f"Columnas en filtered_answers_df: `{filtered_answers_df.columns.tolist()}`")
 
     st.markdown("---")
 
