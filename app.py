@@ -1,11 +1,22 @@
 """
-TECH4ZERO-MX v3.1 — Streamlit Dashboard
+TECH4ZERO-MX v3.2 — Streamlit Dashboard
 ========================================
 Statistical analysis dashboard for school climate and bullying survey.
 
-Version: 3.1 (Sidebar Filters + Modular Architecture)
+Version: 3.2 (Interactive Plotly Charts)
 Survey: SURVEY_004
 Platform: Streamlit Cloud / Vercel
+
+Changelog v3.2:
+- Replaced all st.pyplot() calls with st.plotly_chart() (interactive)
+- New Plotly chart functions (self-contained, no changes to visualization.py):
+    plot_prevalence_plotly        → Sec. 3  horizontal bars + CI + semáforo colors
+    plot_reliability_plotly       → Sec. 2  grouped bar α vs ω + threshold line
+    plot_subgroup_plotly          → Sec. 4  grouped bars by demographic group
+    plot_correlation_plotly       → Sec. 6  annotated heatmap (Spearman ρ)
+    plot_item_severity_plotly     → Sec. 5  ranked horizontal bars per item
+    plot_ecology_hotspots_plotly  → Sec. 7  dual-axis: mean score + % high
+    plot_typology_donut_plotly    → Sec. 8  donut chart Olweus profiles
 
 Changelog v3.1:
 - Added interactive sidebar filters: género, tipo_escuela, edad, lengua_indígena
@@ -21,6 +32,8 @@ import numpy as np
 from datetime import datetime
 import json
 import os
+import plotly.graph_objects as go
+import plotly.express as px
 
 # Import custom modules
 from construct_definitions import (
@@ -471,6 +484,367 @@ def show_filter_banner(n_filtered: int, n_total: int, selections: dict) -> None:
 
 
 # ══════════════════════════════════════════════════════════════
+# PLOTLY CHART FUNCTIONS  (v3.2 — NEW)
+# Each function is self-contained. They receive plain Python /
+# pandas objects so they can be unit-tested independently.
+# ══════════════════════════════════════════════════════════════
+
+# Shared palette — semáforo colors used across charts
+_SEMAFORO = {
+    'CRISIS':       '#d32f2f',
+    'INTERVENCION': '#f57c00',
+    'ATENCION':     '#fbc02d',
+    'MONITOREO':    '#388e3c',
+    'SIN_DATOS':    '#9e9e9e',
+}
+
+_PLOTLY_LAYOUT = dict(
+    plot_bgcolor='rgba(0,0,0,0)',
+    paper_bgcolor='rgba(0,0,0,0)',
+    font=dict(family='sans-serif', size=13),
+    margin=dict(l=10, r=10, t=50, b=10),
+)
+
+
+def plot_prevalence_plotly(prevalence_data: dict, get_construct_metadata_fn) -> go.Figure:
+    """
+    Section 3 — Horizontal bar chart with 95% CI error bars.
+    Bars are color-coded by semáforo category.
+    """
+    rows = []
+    for construct, prev in prevalence_data.items():
+        meta = get_construct_metadata_fn(construct)
+        label = meta.display_name if meta else construct
+        pct   = prev.pct if not np.isnan(prev.pct) else 0.0
+        rows.append({
+            'label':    label,
+            'pct':      round(pct, 1),
+            'ci_minus': round(pct - prev.ci_lower, 1) if not np.isnan(prev.ci_lower) else 0,
+            'ci_plus':  round(prev.ci_upper - pct, 1) if not np.isnan(prev.ci_upper) else 0,
+            'color':    _SEMAFORO.get(prev.threshold_category, _SEMAFORO['SIN_DATOS']),
+            'cat':      prev.threshold_category,
+            'n':        f"{prev.n_true}/{prev.n_with_data}",
+        })
+
+    # Sort by prevalence descending
+    rows = sorted(rows, key=lambda x: x['pct'], reverse=True)
+
+    fig = go.Figure(go.Bar(
+        x=[r['pct'] for r in rows],
+        y=[r['label'] for r in rows],
+        orientation='h',
+        marker_color=[r['color'] for r in rows],
+        error_x=dict(
+            type='data',
+            symmetric=False,
+            array=[r['ci_plus'] for r in rows],
+            arrayminus=[r['ci_minus'] for r in rows],
+            color='#555',
+            thickness=1.5,
+            width=5,
+        ),
+        customdata=[[r['cat'], r['n']] for r in rows],
+        hovertemplate=(
+            '<b>%{y}</b><br>'
+            'Prevalencia: <b>%{x:.1f}%</b><br>'
+            'Categoría: %{customdata[0]}<br>'
+            'N afectados: %{customdata[1]}'
+            '<extra></extra>'
+        ),
+    ))
+
+    fig.update_layout(
+        title='Prevalencia por Constructo (con IC 95%)',
+        xaxis=dict(title='% de estudiantes afectados', range=[0, 100]),
+        yaxis=dict(autorange='reversed'),
+        height=max(350, len(rows) * 42),
+        **_PLOTLY_LAYOUT,
+    )
+    return fig
+
+
+def plot_reliability_plotly(reliability_results: list) -> go.Figure:
+    """
+    Section 2 — Grouped bar: Cronbach α (blue) vs McDonald ω (teal).
+    Horizontal threshold line at α = 0.70.
+    """
+    from construct_definitions import get_construct_metadata as _meta
+
+    labels, alphas, omegas, statuses = [], [], [], []
+    for r in reliability_results:
+        meta = _meta(r.construct)
+        labels.append(meta.display_name if meta else r.construct)
+        alphas.append(round(r.cronbach_alpha, 3) if not np.isnan(r.cronbach_alpha) else None)
+        omegas.append(round(r.mcdonald_omega, 3) if not np.isnan(r.mcdonald_omega) else None)
+        statuses.append('✅' if r.alpha_meets_threshold else '⚠️')
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Bar(
+        name='Cronbach α',
+        x=labels,
+        y=alphas,
+        marker_color='#1565c0',
+        text=[f'{a:.3f}' if a is not None else '—' for a in alphas],
+        textposition='outside',
+        hovertemplate='<b>%{x}</b><br>α = %{y:.3f}<extra></extra>',
+    ))
+
+    fig.add_trace(go.Bar(
+        name='McDonald ω',
+        x=labels,
+        y=omegas,
+        marker_color='#00838f',
+        text=[f'{o:.3f}' if o is not None else '—' for o in omegas],
+        textposition='outside',
+        hovertemplate='<b>%{x}</b><br>ω = %{y:.3f}<extra></extra>',
+    ))
+
+    # Threshold line at 0.70
+    fig.add_hline(
+        y=0.70,
+        line_dash='dash',
+        line_color='#d32f2f',
+        annotation_text='Umbral mínimo α = 0.70',
+        annotation_position='top right',
+        annotation_font_color='#d32f2f',
+    )
+
+    fig.update_layout(
+        title='Confiabilidad por Constructo',
+        barmode='group',
+        yaxis=dict(title='Coeficiente', range=[0, 1.15]),
+        xaxis=dict(title=''),
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+        height=420,
+        **_PLOTLY_LAYOUT,
+    )
+    return fig
+
+
+def plot_subgroup_plotly(comparison) -> go.Figure:
+    """
+    Section 4 — Grouped horizontal bars, one bar per demographic group.
+    comparison.group_stats is a DataFrame with columns: group, pct (or mean), n.
+    Adapts to both binary (prevalence %) and continuous (mean score) comparisons.
+    """
+    df = comparison.group_stats.copy() if hasattr(comparison, 'group_stats') else pd.DataFrame()
+
+    if df.empty:
+        return go.Figure()
+
+    # Detect column to plot: 'pct' for binary, 'mean' or 'median' for continuous
+    value_col  = 'pct'   if 'pct'    in df.columns else \
+                 'mean'  if 'mean'   in df.columns else \
+                 'median' if 'median' in df.columns else df.columns[1]
+    group_col  = df.columns[0]
+    x_title    = '% afectados' if value_col == 'pct' else 'Puntaje promedio'
+
+    fig = go.Figure(go.Bar(
+        x=df[value_col],
+        y=df[group_col].astype(str),
+        orientation='h',
+        marker_color='#1565c0',
+        text=[f'{v:.1f}' for v in df[value_col]],
+        textposition='outside',
+        hovertemplate='<b>%{y}</b><br>' + x_title + ': %{x:.1f}<extra></extra>',
+    ))
+
+    fig.update_layout(
+        title='Comparación por Subgrupo',
+        xaxis=dict(title=x_title),
+        yaxis=dict(autorange='reversed'),
+        height=max(300, len(df) * 45),
+        **_PLOTLY_LAYOUT,
+    )
+    return fig
+
+
+def plot_correlation_plotly(corr_matrix: pd.DataFrame, p_matrix: pd.DataFrame = None) -> go.Figure:
+    """
+    Section 6 — Annotated heatmap of Spearman ρ.
+    Cells with p ≥ 0.05 (non-significant) get a lighter annotation so
+    the viewer's eye is drawn to significant correlations.
+    """
+    if corr_matrix.empty:
+        return go.Figure()
+
+    # Shorten labels for readability on screen
+    short = [c.replace('_sum', '').replace('_', ' ').title() for c in corr_matrix.columns]
+
+    z     = corr_matrix.values.tolist()
+    annot = []
+    for i, row in enumerate(corr_matrix.values):
+        annot_row = []
+        for j, val in enumerate(row):
+            if i == j:
+                annot_row.append('')
+            else:
+                sig = ''
+                if p_matrix is not None and not p_matrix.empty:
+                    pval = p_matrix.iloc[i, j]
+                    sig  = '*' if pval < 0.05 else ''
+                annot_row.append(f'{val:.2f}{sig}')
+        annot.append(annot_row)
+
+    fig = go.Figure(go.Heatmap(
+        z=z,
+        x=short,
+        y=short,
+        colorscale='RdBu_r',
+        zmin=-1, zmax=1,
+        text=annot,
+        texttemplate='%{text}',
+        textfont=dict(size=11),
+        colorbar=dict(title='ρ', thickness=14),
+        hovertemplate='%{y} × %{x}<br>ρ = %{z:.3f}<extra></extra>',
+    ))
+
+    fig.update_layout(
+        title='Correlaciones entre Constructos (Spearman ρ) — * p < 0.05',
+        height=520,
+        xaxis=dict(tickangle=-35),
+        **_PLOTLY_LAYOUT,
+    )
+    return fig
+
+
+def plot_item_severity_plotly(item_data: pd.DataFrame, construct: str) -> go.Figure:
+    """
+    Section 5 — Horizontal bars ranked by mean score per item.
+    Color encodes severity: green → yellow → red.
+    """
+    if item_data.empty:
+        return go.Figure()
+
+    from construct_definitions import get_construct_metadata as _meta
+    meta  = _meta(construct)
+    title = meta.display_name if meta else construct
+
+    df = item_data.copy().sort_values('mean', ascending=True)
+
+    # Map mean score (0–4) to semáforo color
+    def _score_color(m):
+        if m >= 2.5: return _SEMAFORO['CRISIS']
+        if m >= 1.5: return _SEMAFORO['INTERVENCION']
+        if m >= 0.8: return _SEMAFORO['ATENCION']
+        return _SEMAFORO['MONITOREO']
+
+    colors = [_score_color(m) for m in df['mean']]
+
+    # Truncate long item labels
+    labels = [str(lbl)[:60] + '…' if len(str(lbl)) > 60 else str(lbl)
+              for lbl in df.index]
+
+    hover_cols = [c for c in ['mean', 'sd', 'pct_high', 'n'] if c in df.columns]
+
+    fig = go.Figure(go.Bar(
+        x=df['mean'],
+        y=labels,
+        orientation='h',
+        marker_color=colors,
+        text=[f'{m:.2f}' for m in df['mean']],
+        textposition='outside',
+        hovertemplate=(
+            '<b>%{y}</b><br>'
+            'Media: %{x:.2f}<extra></extra>'
+        ),
+    ))
+
+    fig.update_layout(
+        title=f'Severidad de Ítems — {title}',
+        xaxis=dict(title='Puntuación media (0–4)', range=[0, 4.5]),
+        yaxis=dict(autorange='reversed'),
+        height=max(350, len(df) * 40),
+        **_PLOTLY_LAYOUT,
+    )
+    return fig
+
+
+def plot_ecology_hotspots_plotly(hotspot_data: list) -> go.Figure:
+    """
+    Section 7 — Dual-axis: bars = mean score (left), line = % high (right).
+    Only victims are included (caller's responsibility).
+    """
+    if not hotspot_data:
+        return go.Figure()
+
+    df = pd.DataFrame(hotspot_data).sort_values('mean_score', ascending=True)
+
+    fig = go.Figure()
+
+    # Bars — mean score
+    fig.add_trace(go.Bar(
+        name='Puntuación media',
+        x=df['mean_score'],
+        y=df['lugar'],
+        orientation='h',
+        marker_color='#7b1fa2',
+        opacity=0.75,
+        hovertemplate='<b>%{y}</b><br>Media: %{x:.2f}<extra></extra>',
+    ))
+
+    # Scatter — % high, on secondary x-axis
+    fig.add_trace(go.Scatter(
+        name='% Frecuencia alta (≥2)',
+        x=df['pct_high'],
+        y=df['lugar'],
+        mode='markers+text',
+        marker=dict(color='#d32f2f', size=10, symbol='diamond'),
+        text=[f'{v:.0f}%' for v in df['pct_high']],
+        textposition='middle right',
+        xaxis='x2',
+        hovertemplate='<b>%{y}</b><br>% Alto: %{x:.1f}%<extra></extra>',
+    ))
+
+    fig.update_layout(
+        title='Espacios de Riesgo (solo víctimas)',
+        xaxis=dict(title='Puntuación media (0–4)', range=[0, 4.5], side='bottom'),
+        xaxis2=dict(title='% Frecuencia alta', overlaying='x', side='top',
+                    range=[0, 110], showgrid=False),
+        yaxis=dict(autorange='reversed'),
+        legend=dict(orientation='h', yanchor='bottom', y=1.08, xanchor='right', x=1),
+        height=max(350, len(df) * 44),
+        **_PLOTLY_LAYOUT,
+    )
+    return fig
+
+
+def plot_typology_donut_plotly(typology_result) -> go.Figure:
+    """
+    Section 8 — Donut chart for Olweus bully-victim profiles.
+    Color-coded: red → orange → yellow → green.
+    """
+    profile_order  = ['Agresor-Víctima', 'Víctima', 'Agresor', 'No Involucrado']
+    profile_colors = ['#d32f2f', '#f57c00', '#fbc02d', '#388e3c']
+
+    values = [typology_result.counts.get(p, 0) for p in profile_order]
+    pcts   = [typology_result.percentages.get(p, 0.0) for p in profile_order]
+    cis    = [typology_result.ci.get(p, (0, 0)) for p in profile_order]
+
+    fig = go.Figure(go.Pie(
+        labels=profile_order,
+        values=values,
+        hole=0.48,
+        marker=dict(colors=profile_colors, line=dict(color='white', width=2)),
+        textinfo='label+percent',
+        hovertemplate=(
+            '<b>%{label}</b><br>'
+            'N: %{value}<br>'
+            '%{percent}<extra></extra>'
+        ),
+    ))
+
+    fig.update_layout(
+        title='Distribución de Perfiles Olweus',
+        height=400,
+        legend=dict(orientation='h', yanchor='bottom', y=-0.15, xanchor='center', x=0.5),
+        **_PLOTLY_LAYOUT,
+    )
+    return fig
+
+
+# ══════════════════════════════════════════════════════════════
 # MAIN DASHBOARD
 # ══════════════════════════════════════════════════════════════
 
@@ -480,7 +854,7 @@ def main():
     # Reset per-run session flags
     st.session_state["_filter_banner_shown"] = False
 
-    st.title("🏫 TECH4ZERO-MX v3.1")
+    st.title("🏫 TECH4ZERO-MX v3.2")
     st.markdown("**Encuesta de Clima Escolar, Bullying y Cyberbullying**")
     st.markdown("---")
 
@@ -812,8 +1186,8 @@ def main():
     st.dataframe(pd.DataFrame(rel_data), use_container_width=True)
 
     if reliability_results:
-        fig = plot_reliability_comparison(reliability_results)
-        st.pyplot(fig)
+        fig = plot_reliability_plotly(reliability_results)
+        st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("---")
 
@@ -830,8 +1204,8 @@ def main():
             prevalence_data[construct] = prev
 
     if prevalence_data:
-        fig = plot_prevalence_by_construct(prevalence_data)
-        st.pyplot(fig)
+        fig = plot_prevalence_plotly(prevalence_data, get_construct_metadata)
+        st.plotly_chart(fig, use_container_width=True)
 
     prev_table = []
     for construct, prev in prevalence_data.items():
@@ -903,8 +1277,8 @@ def main():
                 )
 
                 if comparison:
-                    fig = plot_subgroup_comparison(comparison)
-                    st.pyplot(fig)
+                    fig = plot_subgroup_plotly(comparison)
+                    st.plotly_chart(fig, use_container_width=True)
                     st.dataframe(comparison.group_stats, use_container_width=True)
 
                     col1, col2, col3 = st.columns(3)
@@ -1027,8 +1401,8 @@ def main():
         item_data = item_descriptives(filtered_answers_df, list(items))
 
         if not item_data.empty:
-            fig = plot_item_severity_ranking(item_data, construct_selector)
-            st.pyplot(fig)
+            fig = plot_item_severity_plotly(item_data, construct_selector)
+            st.plotly_chart(fig, use_container_width=True)
             st.dataframe(item_data, use_container_width=True)
         else:
             st.warning("No hay datos de ítems disponibles")
@@ -1045,16 +1419,16 @@ def main():
     p_matrix    = construct_correlation_pvalues(filtered_df, substantive_constructs)
 
     if not corr_matrix.empty:
-        fig = plot_correlation_heatmap(corr_matrix)
-        st.pyplot(fig)
+        fig = plot_correlation_plotly(corr_matrix, p_matrix)
+        st.plotly_chart(fig, use_container_width=True)
 
         col_rho, col_pval = st.columns(2)
         with col_rho:
-            with st.expander("Ver matriz ρ de Spearman"):
+            with st.expander("Ver matriz ρ de Spearman (tabla)"):
                 st.dataframe(corr_matrix.style.background_gradient(cmap='RdYlGn', vmin=-1, vmax=1))
         with col_pval:
             if not p_matrix.empty:
-                with st.expander("Ver p-valores (significancia)"):
+                with st.expander("Ver p-valores (tabla)"):
                     st.caption("Verde = p < 0.05 (significativo). Rojo = p ≥ 0.05.")
                     st.dataframe(
                         p_matrix.style.background_gradient(cmap='RdYlGn_r', vmin=0, vmax=0.1)
@@ -1097,8 +1471,8 @@ def main():
 
             if hotspot_data:
                 hotspot_data = sorted(hotspot_data, key=lambda x: x['mean_score'], reverse=True)
-                fig = plot_ecology_hotspots(hotspot_data)
-                st.pyplot(fig)
+                fig = plot_ecology_hotspots_plotly(hotspot_data)
+                st.plotly_chart(fig, use_container_width=True)
                 st.dataframe(pd.DataFrame(hotspot_data), use_container_width=True)
             else:
                 st.warning("No hay datos de ecología disponibles")
@@ -1144,6 +1518,10 @@ def main():
                         delta=f"n={cnt} | IC95%: {ci[0]:.1f}-{ci[1]:.1f}" if not np.isnan(pct) else "",
                         delta_color="off",
                     )
+
+            # Donut chart (v3.2)
+            fig_donut = plot_typology_donut_plotly(typology_result)
+            st.plotly_chart(fig_donut, use_container_width=True)
 
             with st.expander("Ver tabla de clasificación completa"):
                 type_rows = []
@@ -1226,7 +1604,7 @@ def main():
 
     # ── Footer ────────────────────────────────────────────────
     st.markdown("---")
-    st.caption("TECH4ZERO-MX v3.1 | Powered by Streamlit + Supabase | SURVEY_004")
+    st.caption("TECH4ZERO-MX v3.2 | Powered by Streamlit + Supabase | SURVEY_004")
 
 
 # ══════════════════════════════════════════════════════════════
