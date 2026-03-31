@@ -1658,6 +1658,99 @@ def main():
                 "El informe usará solo los datos de la encuesta."
             )
 
+    # ── Country / language context ────────────────────────────
+    COUNTRY_CONTEXT = {
+        "MX": {
+            "idioma":        "español mexicano",
+            "pais":          "México",
+            "marco":         "Nueva Escuela Mexicana (NEM)",
+            "ley":           "Ley General de Educación y protocolos SEP contra el acoso escolar",
+            "director_title":"Director(a)",
+            "escuela_term":  "plantel",
+            "bullying_term": "acoso escolar",
+            "saludo":        "Estimado(a) Director(a):",
+        },
+        "CL": {
+            "idioma":        "español chileno",
+            "pais":          "Chile",
+            "marco":         "Política de Convivencia Educativa del MINEDUC",
+            "ley":           "Ley de Violencia Escolar (Ley 20.536) y protocolos MINEDUC",
+            "director_title":"Director(a) / Jefe(a) de UTP",
+            "escuela_term":  "establecimiento educacional",
+            "bullying_term": "acoso escolar",
+            "saludo":        "Estimado(a) Director(a):",
+        },
+        "US": {
+            "idioma":        "English",
+            "pais":          "United States",
+            "marco":         "School Safety and Anti-Bullying Policy",
+            "ley":           "applicable federal and state anti-bullying regulations",
+            "director_title":"Principal",
+            "escuela_term":  "school",
+            "bullying_term": "bullying",
+            "saludo":        "Dear Principal,",
+        },
+    }
+    country_ctx = COUNTRY_CONTEXT.get(school_country.upper(), COUNTRY_CONTEXT["MX"])
+
+    def _build_report_context(
+        school_name, filtered_df, prevalence_data,
+        substantive_constructs, get_construct_metadata_fn,
+        country_ctx: dict,
+    ) -> dict:
+        n = len(filtered_df)
+        prev_summary = {}
+        for construct, prev in prevalence_data.items():
+            meta = get_construct_metadata_fn(construct)
+            label = meta.display_name if meta else construct
+            prev_summary[label] = {
+                "pct":       round(prev.pct, 1) if not np.isnan(prev.pct) else None,
+                "n":         int(prev.n_true),
+                "categoria": prev.threshold_category,
+            }
+        risk_constructs = {k: v for k, v in prev_summary.items() if v["pct"] is not None}
+        top3 = sorted(risk_constructs.items(), key=lambda x: x[1]["pct"], reverse=True)[:3]
+        demo_summary = {}
+        for col, label in [('genero', 'Género'), ('edad', 'Edad'), ('tipo_escuela', 'Nivel escolar')]:
+            if col in filtered_df.columns:
+                vc = filtered_df[col].value_counts(normalize=True).round(3)
+                demo_summary[label] = {str(k): f"{v*100:.1f}%" for k, v in vc.items()}
+        typology_summary = {}
+        if 'bully_victim_type' in filtered_df.columns:
+            vc = filtered_df['bully_victim_type'].value_counts(normalize=True).round(3)
+            typology_summary = {str(k): f"{v*100:.1f}%" for k, v in vc.items()}
+        cyber_overlap = None
+        if ('victimizacion_freq' in filtered_df.columns and
+                'cybervictimizacion_freq' in filtered_df.columns):
+            n_trad  = int(filtered_df['victimizacion_freq'].sum())
+            n_cyber = int(filtered_df['cybervictimizacion_freq'].sum())
+            n_both  = int((filtered_df['victimizacion_freq'] & filtered_df['cybervictimizacion_freq']).sum())
+            cyber_overlap = {"victimas_tradicionales": n_trad, "cibervictimas": n_cyber, "ambos": n_both}
+        risk_idx = calculate_risk_index(filtered_df)
+        risk_summary = {
+            "indice":   round(risk_idx.ssri, 1) if not np.isnan(risk_idx.ssri) else None,
+            "semaforo": risk_idx.threshold_color,
+        }
+        return {
+            "escuela":        school_name,
+            "n_estudiantes":  n,
+            "prevalencias":   prev_summary,
+            "top3_riesgo":    [{"area": k, "pct": v["pct"], "categoria": v["categoria"]} for k, v in top3],
+            "demograficos":   demo_summary,
+            "tipologia":      typology_summary,
+            "cyber_overlap":  cyber_overlap,
+            "indice_riesgo":  risk_summary,
+            "fecha":          datetime.now().strftime("%d de %B de %Y"),
+            "idioma":         country_ctx["idioma"],
+            "pais":           country_ctx["pais"],
+            "marco":          country_ctx["marco"],
+            "ley":            country_ctx["ley"],
+            "director_title": country_ctx["director_title"],
+            "escuela_term":   country_ctx["escuela_term"],
+            "bullying_term":  country_ctx["bullying_term"],
+            "saludo":         country_ctx["saludo"],
+        }
+
     # ── Build report context ──────────────────────────────────
     ctx_report = _build_report_context(
         school_name, filtered_df, prevalence_data,
