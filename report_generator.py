@@ -118,51 +118,100 @@ def _forbidden(ctx: dict) -> str:
 
 
 def _data_block(ctx: dict) -> str:
-    """Compact survey data block — used by all chapter prompts."""
+    """
+    Rich survey data block — includes absolute counts, percentages, CIs,
+    and plain-language interpretive hints so Claude can explain numbers clearly.
+    """
+    n = ctx.get("n_estudiantes", 0) or 1  # avoid division by zero
+
+    # ── Prevalence ────────────────────────────────────────────
     prev_lines = []
     for area, data in ctx.get("prevalencias", {}).items():
-        cat = CAT_MAP.get(data.get("categoria", ""), None)
-        pct = data.get("pct")
+        cat  = CAT_MAP.get(data.get("categoria", ""), None)
+        pct  = data.get("pct")
+        n_af = data.get("n_afectados", data.get("n"))       # back-compat
+        n_to = data.get("n_total", n)
+        ci_l = data.get("ci_lower")
+        ci_u = data.get("ci_upper")
         if cat is None or pct is None:
             continue
-        prev_lines.append(f"  - {area}: {pct}% — {cat}")
+        ci_str = f" (rango confiable: {ci_l}%-{ci_u}%)" if ci_l and ci_u else ""
+        prev_lines.append(
+            f"  - {area}: {n_af} de {n_to} estudiantes ({pct}%){ci_str} — {cat}"
+        )
 
-    top3 = "\n".join(
-        f"  - {x['area']} ({x['pct']}%)"
-        for x in ctx.get("top3_riesgo", [])
-        if x.get("pct") is not None
-    )
+    # ── Top 3 with counts ─────────────────────────────────────
+    top3_lines = []
+    for x in ctx.get("top3_riesgo", []):
+        if x.get("pct") is None:
+            continue
+        n_x   = x.get("n", "?")
+        n_tot = x.get("n_total", n)
+        top3_lines.append(f"  - {x['area']}: {n_x} de {n_tot} estudiantes ({x['pct']}%)")
 
+    # ── Typology with counts ──────────────────────────────────
+    tipo_lines = []
+    for k, v in ctx.get("tipologia", {}).items():
+        if isinstance(v, dict):
+            tipo_lines.append(f"  - {k}: {v.get('n','?')} estudiantes ({v.get('pct','?')})")
+        else:
+            tipo_lines.append(f"  - {k}: {v}")
+
+    # ── Demographics with counts ──────────────────────────────
     demo_lines = []
     for label, dist in ctx.get("demograficos", {}).items():
-        vals = ", ".join(f"{k}: {v}" for k, v in dist.items())
-        demo_lines.append(f"  - {label}: {vals}")
+        parts = []
+        for cat_val, val in dist.items():
+            if isinstance(val, dict):
+                parts.append(f"{cat_val}: {val.get('n','?')} ({val.get('pct','?')})")
+            else:
+                parts.append(f"{cat_val}: {val}")
+        demo_lines.append(f"  - {label}: {', '.join(parts)}")
 
-    tipo_lines = "\n".join(
-        f"  - {k}: {v}" for k, v in ctx.get("tipologia", {}).items()
-    )
-
+    # ── Cyber overlap ─────────────────────────────────────────
     cyber = ctx.get("cyber_overlap")
-    cyber_block = (
-        f"  - Tradicional: {cyber['victimas_tradicionales']} | Cyber: {cyber['cibervictimas']} | Ambos: {cyber['ambos']}"
-    ) if cyber else "  - Sin datos"
+    if cyber:
+        cyber_block = (
+            f"  - Bullying tradicional: {cyber['victimas_tradicionales']} estudiantes "
+            f"({cyber.get('pct_tradicionales', '?')}% del total)\n"
+            f"  - Cyberbullying: {cyber['cibervictimas']} estudiantes "
+            f"({cyber.get('pct_cyber', '?')}% del total)\n"
+            f"  - Afectados en AMBOS tipos: {cyber['ambos']} estudiantes "
+            f"({cyber.get('pct_ambos_de_trad', '?')}% de las víctimas tradicionales)"
+        )
+    else:
+        cyber_block = "  - Sin datos de cyberbullying"
 
-    risk = ctx.get("indice_riesgo", {})
-    risk_val = risk.get("indice")
-    if risk_val is None:      risk_label = "no disponible"
-    elif risk_val >= 60:      risk_label = "alto"
-    elif risk_val >= 40:      risk_label = "moderado-alto"
-    elif risk_val >= 20:      risk_label = "moderado"
-    else:                     risk_label = "bajo"
+    # ── Risk index ────────────────────────────────────────────
+    risk      = ctx.get("indice_riesgo", {})
+    risk_val  = risk.get("indice")
+    risk_r    = risk.get("componente_riesgo")
+    risk_p    = risk.get("componente_protector")
+    if risk_val is None:   risk_label = "no disponible"
+    elif risk_val >= 60:   risk_label = "alto"
+    elif risk_val >= 40:   risk_label = "moderado-alto"
+    elif risk_val >= 20:   risk_label = "moderado"
+    else:                  risk_label = "bajo"
+    risk_str = f"{risk_val}/100 — nivel {risk_label}" if risk_val else "no disponible"
+    if risk_r and risk_p:
+        risk_str += f" (factores de riesgo: {risk_r}/100 | factores protectores: {risk_p}/100)"
 
     return (
-        f"ESCUELA: {ctx.get('escuela', 'N/A')} | FECHA: {ctx.get('fecha', '')} | "
-        f"ESTUDIANTES: {ctx.get('n_estudiantes', 'N/A')} | RIESGO GLOBAL: {risk_label}\n"
-        f"\nÁREAS (todas):\n{chr(10).join(prev_lines) or '  - Sin datos'}\n"
-        f"\nTOP 3:\n{top3 or '  - Sin datos'}\n"
-        f"\nTIPOLOGÍA OLWEUS:\n{tipo_lines or '  - Sin datos'}\n"
-        f"\nCYBER vs TRADICIONAL:\n{cyber_block}\n"
-        f"\nDEMOGRAFÍA:\n{chr(10).join(demo_lines) or '  - Sin datos'}"
+        f"═══ DATOS DE LA ENCUESTA ═══\n"
+        f"Escuela: {ctx.get('escuela', 'N/A')}\n"
+        f"Fecha: {ctx.get('fecha', '')}\n"
+        f"Total estudiantes encuestados: {ctx.get('n_estudiantes', 'N/A')}\n"
+        f"Índice de riesgo escolar: {risk_str}\n"
+        f"\nRESULTADOS POR ÁREA (con conteos exactos):\n"
+        f"{chr(10).join(prev_lines) or '  - Sin datos'}\n"
+        f"\nÁREAS MÁS CRÍTICAS (top 3):\n"
+        f"{chr(10).join(top3_lines) or '  - Sin datos'}\n"
+        f"\nTIPOLOGÍA DE ESTUDIANTES (modelo Olweus):\n"
+        f"{chr(10).join(tipo_lines) or '  - Sin datos'}\n"
+        f"\nBULLYING TRADICIONAL vs CYBERBULLYING:\n"
+        f"{cyber_block}\n"
+        f"\nCOMPOSICIÓN DE LA MUESTRA:\n"
+        f"{chr(10).join(demo_lines) or '  - Sin datos'}"
     )
 
 
@@ -209,25 +258,41 @@ def _build_chapter_prompt(chapter: dict, ctx: dict, manual_texts: dict) -> str:
         instructions = (
             f"## Capítulo 1: {title}\n\n"
             f"INSTRUCCIONES ESTRICTAS:\n"
-            f"- Máximo 250 palabras en total.\n"
-            f"- Párrafo 1 (3 oraciones): panorama general — nivel de riesgo global en lenguaje simple.\n"
-            f"- Lista de 3 a 5 ítems: hallazgos clave de la encuesta, uno por área, con el dato y su significado práctico.\n"
-            f"- Párrafo final (2 oraciones): perfil de los estudiantes más afectados según tipología y demografía.\n"
-            f"- NO incluyas recomendaciones ni llamados a la acción — eso va en capítulos posteriores.\n"
-            f"- Usa frases proporcionales ('1 de cada 3', 'la mayoría') en vez de porcentajes exactos.\n"
+            f"- Máximo 350 palabras en total.\n"
+            f"- Párrafo 1 (3-4 oraciones): panorama general. Menciona el índice de riesgo escolar en términos "
+            f"  simples (qué significa ese número para esta escuela). Incluye el número de estudiantes encuestados.\n"
+            f"- Lista de hallazgos por área: para CADA área con datos, escribe 1 línea con:\n"
+            f"    • El nombre del área\n"
+            f"    • Cuántos estudiantes están afectados (número y proporción en lenguaje natural)\n"
+            f"    • Una frase que explique qué significa ese número en la práctica para un director\n"
+            f"    Ejemplo correcto: 'Victimización: 12 de cada 25 estudiantes reportaron haber sido agredidos "
+            f"    — esto supera el umbral de alerta para escuelas de este tamaño.'\n"
+            f"- Párrafo final (3 oraciones): perfil de los estudiantes más afectados. Usa los datos de "
+            f"  tipología Olweus y demografía. Menciona conteos absolutos: 'X estudiantes clasificados como "
+            f"  víctimas, Y como agresores'.\n"
+            f"- IMPORTANTE: usa los números exactos de la encuesta — pero explica qué significan.\n"
+            f"  Por ejemplo: '8 de 25 estudiantes (casi 1 de cada 3)' es mejor que solo '32%'.\n"
+            f"- NO incluyas recomendaciones — eso va en capítulos posteriores.\n"
         )
 
     elif num == 2:
         instructions = (
             f"## Capítulo 2: {title}\n\n"
             f"INSTRUCCIONES ESTRICTAS:\n"
-            f"- Máximo 300 palabras en total.\n"
-            f"- Párrafo 1 (3 oraciones): qué es el acoso escolar según el Programa ZERO — definición breve y clara.\n"
-            f"- Párrafo 2 (3 oraciones): CONECTA la definición con los datos reales de ESTA escuela. "
-            f"  Menciona los tipos de acoso encontrados (tradicional, cyber, etc.) y en qué se manifiestan aquí.\n"
-            f"- Párrafo 3 (3 oraciones): explica por qué las cifras de esta escuela son importantes "
-            f"  en el contexto del Programa ZERO — qué nos dice sobre la dinámica escolar.\n"
-            f"- NO repitas el nivel de riesgo global ya mencionado en el Capítulo 1.\n"
+            f"- Máximo 400 palabras en total.\n"
+            f"- Párrafo 1 (3 oraciones): qué es el acoso escolar según el Programa ZERO. "
+            f"  Definición clara, sin jerga. Explica la diferencia entre conflicto normal y acoso.\n"
+            f"- Párrafo 2 — ANÁLISIS DE LA ENCUESTA DE ESTA ESCUELA (el más importante):\n"
+            f"    • Qué tipos de acoso predominan en esta escuela según los datos (tradicional, cyber, o ambos)\n"
+            f"    • Qué nos dice el índice de riesgo sobre la gravedad: los factores de riesgo vs protectores\n"
+            f"    • Si hay solapamiento tradicional+cyber, explica qué significa: que los mismos estudiantes "
+            f"      sufren en dos frentes simultáneamente\n"
+            f"    • Qué nos dice la tipología Olweus: si hay muchos agresores-víctimas, es más grave que "
+            f"      solo víctimas porque indica una dinámica escolar deteriorada\n"
+            f"    Usa los números de la encuesta para fundamentar cada observación.\n"
+            f"- Párrafo 3 (3 oraciones): qué nos dice el perfil demográfico sobre quiénes son "
+            f"  más vulnerables en esta escuela específica.\n"
+            f"- NO repitas el nivel de riesgo global ya explicado en el Capítulo 1.\n"
             f"- NO incluyas recomendaciones.\n"
         )
 
