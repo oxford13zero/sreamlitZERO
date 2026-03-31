@@ -118,19 +118,38 @@ def _filter_relevant_sections(text: str, max_chars: int) -> str:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+def _find_base_dir() -> str:
+    """
+    Locate the manuals root folder regardless of case (Manuales vs manuales)
+    and regardless of the current working directory.
+    Tries common locations used by Streamlit Cloud and local dev.
+    """
+    candidates = [
+        "manuales", "Manuales",
+        os.path.join(os.path.dirname(__file__), "manuales"),
+        os.path.join(os.path.dirname(__file__), "Manuales"),
+    ]
+    for path in candidates:
+        if os.path.isdir(path):
+            return path
+    return "manuales"  # fallback — will return empty strings gracefully
+
+
 @st.cache_data(ttl=3600)
-def load_category(category: str, base_dir: str = "manuales") -> str:
+def load_category(category: str, base_dir: str = None) -> str:
     """
     Load and filter text from all files in a category subfolder.
 
     Args:
         category: 'fenomeno' | 'enfoque' | 'intervencion' | 'prevencion'
-        base_dir: root folder (default 'manuales')
+        base_dir: root folder (auto-detected if None)
 
     Returns:
         Filtered text string, max ~25,000 chars.
         Returns empty string if folder not found.
     """
+    if base_dir is None:
+        base_dir = _find_base_dir()
     folder = os.path.join(base_dir, category)
     if not os.path.isdir(folder):
         return ""
@@ -149,26 +168,54 @@ def load_category(category: str, base_dir: str = "manuales") -> str:
 
 
 @st.cache_data(ttl=3600)
-def load_action_plan(base_dir: str = "manuales") -> str:
+def load_action_plan(base_dir: str = None) -> str:
     """
-    Load the full Plan de Acción ZERO document.
+    Load the Plan de Acción ZERO document or folder.
+
+    Looks in these locations (in order):
+      1. manuales/plan_de_accion_zero.md   (original spec)
+      2. Manuales/plan_de_accion_zero.md
+      3. manuales/plan_de_accion/          (subfolder with any files)
+      4. Manuales/plan_de_accion/          (subfolder, case-insensitive)
 
     Returns:
-        Full text of plan_de_accion_zero.md (up to MAX_CHARS_PLAN chars).
-        Returns empty string if file not found.
+        Text content up to MAX_CHARS_PLAN chars.
+        Returns empty string if nothing found.
     """
-    path = os.path.join(base_dir, "plan_de_accion_zero.md")
-    if not os.path.isfile(path):
-        return ""
-    text = _extract_text_file(path)
-    return text[:MAX_CHARS_PLAN]
+    if base_dir is None:
+        base_dir = _find_base_dir()
+
+    # Option 1: single .md file
+    md_path = os.path.join(base_dir, "plan_de_accion_zero.md")
+    if os.path.isfile(md_path):
+        return _extract_text_file(md_path)[:MAX_CHARS_PLAN]
+
+    # Option 2: subfolder named plan_de_accion (or plan_de_accion_zero)
+    for subfolder in ["plan_de_accion", "plan_de_accion_zero"]:
+        folder = os.path.join(base_dir, subfolder)
+        if os.path.isdir(folder):
+            parts = []
+            for fname in sorted(os.listdir(folder)):
+                fpath = os.path.join(folder, fname)
+                if os.path.isfile(fpath):
+                    raw = _extract_file(fpath)
+                    if raw:
+                        parts.append(f"### [{fname}]\n{raw}")
+            combined = "\n\n".join(parts)
+            return combined[:MAX_CHARS_PLAN]
+
+    return ""
 
 
-def get_manual_status(base_dir: str = "manuales") -> dict:
+def get_manual_status(base_dir: str = None) -> dict:
     """
     Returns a status dict for each category — useful for the UI to show
     which manuals are loaded and how many files per category.
+    Auto-detects the base directory (handles Manuales vs manuales).
     """
+    if base_dir is None:
+        base_dir = _find_base_dir()
+
     categories = ['fenomeno', 'enfoque', 'intervencion', 'prevencion']
     status = {}
     for cat in categories:
@@ -181,6 +228,15 @@ def get_manual_status(base_dir: str = "manuales") -> dict:
         else:
             status[cat] = 0
 
-    plan_path = os.path.join(base_dir, "plan_de_accion_zero.md")
-    status['plan_de_accion'] = 1 if os.path.isfile(plan_path) else 0
+    # Check both file and folder variants for plan_de_accion
+    plan_file   = os.path.join(base_dir, "plan_de_accion_zero.md")
+    plan_folder = os.path.join(base_dir, "plan_de_accion")
+    if os.path.isfile(plan_file):
+        status['plan_de_accion'] = 1
+    elif os.path.isdir(plan_folder):
+        files = [f for f in os.listdir(plan_folder)
+                 if os.path.isfile(os.path.join(plan_folder, f))]
+        status['plan_de_accion'] = len(files)
+    else:
+        status['plan_de_accion'] = 0
     return status
