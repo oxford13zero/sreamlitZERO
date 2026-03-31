@@ -1699,43 +1699,77 @@ def main():
         country_ctx: dict,
     ) -> dict:
         n = len(filtered_df)
+
+        # Prevalence — include n_true, n_total and pct for richer context
         prev_summary = {}
         for construct, prev in prevalence_data.items():
             meta = get_construct_metadata_fn(construct)
             label = meta.display_name if meta else construct
             prev_summary[label] = {
                 "pct":       round(prev.pct, 1) if not np.isnan(prev.pct) else None,
-                "n":         int(prev.n_true),
+                "n_afectados": int(prev.n_true),
+                "n_total":   int(prev.n_with_data),
                 "categoria": prev.threshold_category,
+                "ci_lower":  round(prev.ci_lower, 1) if not np.isnan(prev.ci_lower) else None,
+                "ci_upper":  round(prev.ci_upper, 1) if not np.isnan(prev.ci_upper) else None,
             }
+
         risk_constructs = {k: v for k, v in prev_summary.items() if v["pct"] is not None}
         top3 = sorted(risk_constructs.items(), key=lambda x: x[1]["pct"], reverse=True)[:3]
+
+        # Demographics — include absolute counts too
         demo_summary = {}
         for col, label in [('genero', 'Género'), ('edad', 'Edad'), ('tipo_escuela', 'Nivel escolar')]:
             if col in filtered_df.columns:
-                vc = filtered_df[col].value_counts(normalize=True).round(3)
-                demo_summary[label] = {str(k): f"{v*100:.1f}%" for k, v in vc.items()}
+                vc_abs  = filtered_df[col].value_counts()
+                vc_pct  = filtered_df[col].value_counts(normalize=True).round(3)
+                demo_summary[label] = {
+                    str(k): {"n": int(vc_abs[k]), "pct": f"{vc_pct[k]*100:.1f}%"}
+                    for k in vc_abs.index
+                }
+
+        # Typology — include absolute counts
         typology_summary = {}
         if 'bully_victim_type' in filtered_df.columns:
-            vc = filtered_df['bully_victim_type'].value_counts(normalize=True).round(3)
-            typology_summary = {str(k): f"{v*100:.1f}%" for k, v in vc.items()}
+            vc_abs = filtered_df['bully_victim_type'].value_counts()
+            vc_pct = filtered_df['bully_victim_type'].value_counts(normalize=True).round(3)
+            typology_summary = {
+                str(k): {"n": int(vc_abs[k]), "pct": f"{vc_pct[k]*100:.1f}%"}
+                for k in vc_abs.index
+            }
+
+        # Cyber overlap
         cyber_overlap = None
         if ('victimizacion_freq' in filtered_df.columns and
                 'cybervictimizacion_freq' in filtered_df.columns):
             n_trad  = int(filtered_df['victimizacion_freq'].sum())
             n_cyber = int(filtered_df['cybervictimizacion_freq'].sum())
             n_both  = int((filtered_df['victimizacion_freq'] & filtered_df['cybervictimizacion_freq']).sum())
-            cyber_overlap = {"victimas_tradicionales": n_trad, "cibervictimas": n_cyber, "ambos": n_both}
+            pct_trad  = round(n_trad / n * 100, 1) if n > 0 else 0
+            pct_cyber = round(n_cyber / n * 100, 1) if n > 0 else 0
+            pct_both  = round(n_both / n_trad * 100, 1) if n_trad > 0 else 0
+            cyber_overlap = {
+                "victimas_tradicionales": n_trad,  "pct_tradicionales": pct_trad,
+                "cibervictimas":          n_cyber,  "pct_cyber":          pct_cyber,
+                "ambos":                  n_both,   "pct_ambos_de_trad":  pct_both,
+            }
+
+        # Risk index
         risk_idx = calculate_risk_index(filtered_df)
         risk_summary = {
-            "indice":   round(risk_idx.ssri, 1) if not np.isnan(risk_idx.ssri) else None,
-            "semaforo": risk_idx.threshold_color,
+            "indice":              round(risk_idx.ssri, 1) if not np.isnan(risk_idx.ssri) else None,
+            "semaforo":            risk_idx.threshold_color,
+            "componente_riesgo":   round(risk_idx.risk_component, 1) if not np.isnan(risk_idx.risk_component) else None,
+            "componente_protector":round(risk_idx.protective_component, 1) if not np.isnan(risk_idx.protective_component) else None,
         }
+
         return {
             "escuela":        school_name,
             "n_estudiantes":  n,
             "prevalencias":   prev_summary,
-            "top3_riesgo":    [{"area": k, "pct": v["pct"], "categoria": v["categoria"]} for k, v in top3],
+            "top3_riesgo":    [{"area": k, "pct": v["pct"], "n": v["n_afectados"],
+                                "n_total": v["n_total"], "categoria": v["categoria"]}
+                               for k, v in top3],
             "demograficos":   demo_summary,
             "tipologia":      typology_summary,
             "cyber_overlap":  cyber_overlap,
