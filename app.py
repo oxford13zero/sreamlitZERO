@@ -34,6 +34,7 @@ import json
 import os
 import plotly.graph_objects as go
 import plotly.express as px
+import anthropic
 
 # Import custom modules
 from construct_definitions import (
@@ -1979,7 +1980,6 @@ Do not add comments at the end. Just the report.
     if generate:
         with st.spinner(spinner_msg):
             try:
-                import anthropic
                 client = anthropic.Anthropic(
                     api_key=st.secrets.get("ANTHROPIC_API_KEY", os.getenv("ANTHROPIC_API_KEY", ""))
                 )
