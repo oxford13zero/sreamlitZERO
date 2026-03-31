@@ -98,49 +98,34 @@ FORBIDDEN_TERMS_EN = (
 )
 
 CAT_MAP = {
-    "CRISIS":       "situación de emergencia que requiere acción inmediata",
-    "INTERVENCION": "situación preocupante que requiere atención urgente",
-    "ATENCION":     "situación que merece seguimiento y atención",
-    "MONITOREO":    "situación bajo control",
+    "CRISIS":       "requiere acción prioritaria",
+    "INTERVENCION": "requiere atención",
+    "ATENCION":     "merece seguimiento",
+    "MONITOREO":    "bajo control",
     "SIN_DATOS":    None,
 }
 
 
 # ── Prompt builders ───────────────────────────────────────────────────────────
 
-def _base_instructions(ctx: dict, chapter_num: int, chapter_title: str) -> str:
-    """Common instructions injected into every chapter prompt."""
-    cc = COUNTRY_CONTEXT.get(ctx.get("school_country", "MX"), COUNTRY_CONTEXT["MX"])
-    forbidden = FORBIDDEN_TERMS_EN if cc["idioma"] == "English" else FORBIDDEN_TERMS_ES
+def _get_cc(ctx: dict) -> dict:
+    return COUNTRY_CONTEXT.get(ctx.get("school_country", "MX"), COUNTRY_CONTEXT["MX"])
 
-    return f"""You are a school climate and bullying prevention specialist for the ZERO Programme (Roland, University of Stavanger).
-Write CHAPTER {chapter_num}: {chapter_title}
 
-MANDATORY WRITING RULES:
-1. Write entirely in {cc['idioma']}.
-2. Target: 400-600 words for this chapter.
-3. FORBIDDEN technical terms: {forbidden}
-4. Use proportional language instead of exact percentages:
-   "casi la mitad", "1 de cada 3", "la mayoría", "un grupo importante"
-5. Tone: professional, warm, action-oriented. Not alarmist.
-6. Reference framework: {cc['marco']} and {cc['ley']}.
-7. Use "{cc['bullying_term']}" — avoid anglicisms.
-8. If any data value is null, silently omit that subsection.
-9. Address the {cc['director_title']} directly ("su escuela", "sus estudiantes").
-10. Start the chapter directly with the heading: ## Capítulo {chapter_num}: {chapter_title}
-    Do not add preamble or meta-commentary.
-"""
+def _forbidden(ctx: dict) -> str:
+    cc = _get_cc(ctx)
+    return FORBIDDEN_TERMS_EN if cc["idioma"] == "English" else FORBIDDEN_TERMS_ES
 
 
 def _data_block(ctx: dict) -> str:
-    """Serialize the survey context into a readable block."""
+    """Compact survey data block — used by all chapter prompts."""
     prev_lines = []
     for area, data in ctx.get("prevalencias", {}).items():
         cat = CAT_MAP.get(data.get("categoria", ""), None)
         pct = data.get("pct")
         if cat is None or pct is None:
             continue
-        prev_lines.append(f"  - {area}: {pct}% de estudiantes afectados — {cat}")
+        prev_lines.append(f"  - {area}: {pct}% — {cat}")
 
     top3 = "\n".join(
         f"  - {x['area']} ({x['pct']}%)"
@@ -159,81 +144,142 @@ def _data_block(ctx: dict) -> str:
 
     cyber = ctx.get("cyber_overlap")
     cyber_block = (
-        f"  - Bullying tradicional: {cyber['victimas_tradicionales']} estudiantes\n"
-        f"  - Cyberbullying: {cyber['cibervictimas']} estudiantes\n"
-        f"  - Afectados en ambos: {cyber['ambos']} estudiantes"
-    ) if cyber else "  - Sin datos de cyberbullying"
+        f"  - Tradicional: {cyber['victimas_tradicionales']} | Cyber: {cyber['cibervictimas']} | Ambos: {cyber['ambos']}"
+    ) if cyber else "  - Sin datos"
 
     risk = ctx.get("indice_riesgo", {})
     risk_val = risk.get("indice")
-    if risk_val is None:
-        risk_label = "no disponible"
-    elif risk_val >= 60:
-        risk_label = "alto"
-    elif risk_val >= 40:
-        risk_label = "moderado-alto"
-    elif risk_val >= 20:
-        risk_label = "moderado"
-    else:
-        risk_label = "bajo"
+    if risk_val is None:      risk_label = "no disponible"
+    elif risk_val >= 60:      risk_label = "alto"
+    elif risk_val >= 40:      risk_label = "moderado-alto"
+    elif risk_val >= 20:      risk_label = "moderado"
+    else:                     risk_label = "bajo"
 
-    return f"""SURVEY DATA FOR {ctx.get('escuela', 'the school').upper()}
-Date: {ctx.get('fecha', datetime.now().strftime('%d/%m/%Y'))}
-Students surveyed: {ctx.get('n_estudiantes', 'N/A')}
-Overall risk level: {risk_label}
-
-Findings by area:
-{chr(10).join(prev_lines) or '  - No data available'}
-
-Top 3 areas of concern:
-{top3 or '  - No data available'}
-
-Student profile distribution (Olweus typology):
-{tipo_lines or '  - No data available'}
-
-Traditional vs. cyberbullying:
-{cyber_block}
-
-Student demographics:
-{chr(10).join(demo_lines) or '  - No demographic data'}
-"""
+    return (
+        f"ESCUELA: {ctx.get('escuela', 'N/A')} | FECHA: {ctx.get('fecha', '')} | "
+        f"ESTUDIANTES: {ctx.get('n_estudiantes', 'N/A')} | RIESGO GLOBAL: {risk_label}\n"
+        f"\nÁREAS (todas):\n{chr(10).join(prev_lines) or '  - Sin datos'}\n"
+        f"\nTOP 3:\n{top3 or '  - Sin datos'}\n"
+        f"\nTIPOLOGÍA OLWEUS:\n{tipo_lines or '  - Sin datos'}\n"
+        f"\nCYBER vs TRADICIONAL:\n{cyber_block}\n"
+        f"\nDEMOGRAFÍA:\n{chr(10).join(demo_lines) or '  - Sin datos'}"
+    )
 
 
-def _build_chapter_prompt(
-    chapter: dict,
-    ctx: dict,
-    manual_texts: dict,
-) -> str:
-    """Build the full prompt for one chapter."""
-
-    instructions = _base_instructions(ctx, chapter["num"], chapter["title"])
-    data = _data_block(ctx)
-
-    # Gather manual context for this chapter
-    manual_blocks = []
+def _manual_block(chapter: dict, manual_texts: dict) -> str:
+    """Gather and label manual text for a chapter."""
+    labels = {
+        "fenomeno":       "MANUALES — Fenómeno del acoso escolar",
+        "enfoque":        "MANUALES — Enfoque integrado",
+        "intervencion":   "MANUALES — Protocolos de intervención",
+        "prevencion":     "MANUALES — Estrategias de prevención",
+        "plan_de_accion": "PLAN DE ACCIÓN — Programa ZERO",
+    }
+    blocks = []
     for key in chapter["manual_keys"]:
         text = manual_texts.get(key, "")
         if text:
-            label = {
-                "fenomeno":     "MANUALS — The Bullying Phenomenon",
-                "enfoque":      "MANUALS — Integrated Approach",
-                "intervencion": "MANUALS — Intervention Protocols",
-                "prevencion":   "MANUALS — Prevention Strategies",
-                "plan_de_accion": "ACTION PLAN — ZERO Programme",
-            }.get(key, key.upper())
-            manual_blocks.append(f"=== {label} ===\n{text}")
+            blocks.append(f"=== {labels.get(key, key.upper())} ===\n{text}")
+    if blocks:
+        return "\n\nFUENTE — MANUALES PROGRAMA ZERO\nBasa el contenido EXCLUSIVAMENTE en este material:\n\n" + "\n\n".join(blocks)
+    return "\n\nNOTA: Manuales no disponibles. Usa principios generales del Programa ZERO."
 
-    manual_section = (
-        "\n\nSOURCE MATERIAL FROM ZERO PROGRAMME MANUALS\n"
-        "Base your recommendations EXCLUSIVELY on this material.\n"
-        "Do not invent protocols or strategies not found here.\n\n"
-        + "\n\n".join(manual_blocks)
-    ) if manual_blocks else (
-        "\n\nNOTE: Manual content not available. "
-        "Base recommendations on established ZERO Programme principles."
+
+def _build_chapter_prompt(chapter: dict, ctx: dict, manual_texts: dict) -> str:
+    """Build a tight, chapter-specific prompt. Each chapter has explicit output rules."""
+    cc       = _get_cc(ctx)
+    forbidden = _forbidden(ctx)
+    data     = _data_block(ctx)
+    manuals  = _manual_block(chapter, manual_texts)
+    num      = chapter["num"]
+    title    = chapter["title"]
+
+    # ── Common header (injected in all chapters) ──────────────
+    header = (
+        f"Eres especialista en convivencia escolar del Programa ZERO (Roland, Stavanger).\n"
+        f"Idioma: {cc['idioma']}. Destinatario: {cc['director_title']} de {ctx.get('escuela','la escuela')}.\n"
+        f"Términos prohibidos: {forbidden}.\n"
+        f"Marco normativo: {cc['marco']}.\n"
+        f"REGLA GLOBAL: sin redundancias entre capítulos. Cada capítulo tiene un rol único.\n"
+        f"Comienza directamente con el encabezado markdown del capítulo.\n"
     )
 
-    return f"{instructions}\n\n{data}{manual_section}"
+    # ── Chapter-specific instructions ─────────────────────────
+    if num == 1:
+        instructions = (
+            f"## Capítulo 1: {title}\n\n"
+            f"INSTRUCCIONES ESTRICTAS:\n"
+            f"- Máximo 250 palabras en total.\n"
+            f"- Párrafo 1 (3 oraciones): panorama general — nivel de riesgo global en lenguaje simple.\n"
+            f"- Lista de 3 a 5 ítems: hallazgos clave de la encuesta, uno por área, con el dato y su significado práctico.\n"
+            f"- Párrafo final (2 oraciones): perfil de los estudiantes más afectados según tipología y demografía.\n"
+            f"- NO incluyas recomendaciones ni llamados a la acción — eso va en capítulos posteriores.\n"
+            f"- Usa frases proporcionales ('1 de cada 3', 'la mayoría') en vez de porcentajes exactos.\n"
+        )
+
+    elif num == 2:
+        instructions = (
+            f"## Capítulo 2: {title}\n\n"
+            f"INSTRUCCIONES ESTRICTAS:\n"
+            f"- Máximo 300 palabras en total.\n"
+            f"- Párrafo 1 (3 oraciones): qué es el acoso escolar según el Programa ZERO — definición breve y clara.\n"
+            f"- Párrafo 2 (3 oraciones): CONECTA la definición con los datos reales de ESTA escuela. "
+            f"  Menciona los tipos de acoso encontrados (tradicional, cyber, etc.) y en qué se manifiestan aquí.\n"
+            f"- Párrafo 3 (3 oraciones): explica por qué las cifras de esta escuela son importantes "
+            f"  en el contexto del Programa ZERO — qué nos dice sobre la dinámica escolar.\n"
+            f"- NO repitas el nivel de riesgo global ya mencionado en el Capítulo 1.\n"
+            f"- NO incluyas recomendaciones.\n"
+        )
+
+    elif num == 3:
+        instructions = (
+            f"## Capítulo 3: {title}\n\n"
+            f"INSTRUCCIONES ESTRICTAS:\n"
+            f"- Máximo 350 palabras en total.\n"
+            f"- Basándote en los manuales, describe el protocolo de intervención en 3 pasos concretos:\n"
+            f"  Paso 1: cómo detectar y confirmar un caso.\n"
+            f"  Paso 2: qué hace el adulto responsable con la víctima y el agresor por separado.\n"
+            f"  Paso 3: seguimiento post-incidente con la clase y los padres.\n"
+            f"- Cada paso: máximo 2 oraciones, lenguaje de acción (verbos en infinitivo).\n"
+            f"- Un párrafo final (2 oraciones) sobre cuándo involucrar a externos (familia, autoridades).\n"
+            f"- NO uses la frase 'acción inmediata' — describe la acción específica en su lugar.\n"
+            f"- NO repitas datos de la encuesta ya presentados en los capítulos anteriores.\n"
+        )
+
+    elif num == 4:
+        instructions = (
+            f"## Capítulo 4: {title}\n\n"
+            f"INSTRUCCIONES ESTRICTAS:\n"
+            f"- Máximo 350 palabras en total.\n"
+            f"- 3 secciones breves, una por actor:\n"
+            f"  **Docentes**: 2 acciones concretas basadas en los manuales.\n"
+            f"  **Padres y apoderados**: 2 acciones concretas basadas en los manuales.\n"
+            f"  **Estudiantes**: 2 acciones concretas basadas en los manuales.\n"
+            f"- Cada acción: 1 oración, verbo en infinitivo, específica y realizable.\n"
+            f"- NO repitas el protocolo de intervención del Capítulo 3.\n"
+            f"- NO uses 'acción inmediata' — describe la acción específica.\n"
+        )
+
+    elif num == 5:
+        instructions = (
+            f"## Capítulo 5: {title}\n\n"
+            f"INSTRUCCIONES ESTRICTAS:\n"
+            f"- Máximo 400 palabras en total.\n"
+            f"- Basándote en el Plan de Acción ZERO y los datos de esta escuela específica:\n"
+            f"  **Objetivo del año**: 1 objetivo cuantificable y realista para este establecimiento.\n"
+            f"  **Próximas 2 semanas**: 2 acciones concretas e inmediatas.\n"
+            f"  **Próximo mes**: 2 acciones de mediano plazo.\n"
+            f"  **Durante el ciclo escolar**: 2 iniciativas permanentes.\n"
+            f"- Cada acción: 1 oración, verbo en infinitivo, específica para esta escuela.\n"
+            f"- El objetivo debe incluir un número (ej: 'reducir en un 20%' o 'implementar 3 actividades').\n"
+            f"- NO repitas recomendaciones ya mencionadas en capítulos anteriores.\n"
+            f"- Cierra con 1 oración motivacional firmada: *Equipo TECH4ZERO-MX*.\n"
+        )
+
+    else:
+        instructions = f"## Capítulo {num}: {title}\n\nEscribe el contenido de este capítulo en máximo 300 palabras.\n"
+
+    return f"{header}\n{instructions}\nDATOS DE LA ENCUESTA:\n{data}{manuals}"
 
 
 # ── Main generator ────────────────────────────────────────────────────────────
