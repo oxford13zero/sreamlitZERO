@@ -52,14 +52,6 @@ from stats_engine import (
     calculate_risk_index,
     assess_sample_representativeness,
 )
-from visualization import (
-    plot_reliability_comparison,
-    plot_prevalence_by_construct,
-    plot_subgroup_comparison,
-    plot_correlation_heatmap,
-    plot_item_severity_ranking,
-    plot_ecology_hotspots,
-)
 
 # Supabase import
 from supabase import create_client
