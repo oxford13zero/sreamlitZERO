@@ -326,17 +326,74 @@ def _build_chapter_prompt(chapter: dict, ctx: dict, manual_texts: dict) -> str:
         )
 
     elif num == 5:
+        # Pre-compute objective guidance from survey data
+        risk_val  = ctx.get("indice_riesgo", {}).get("indice")
+        top3_areas = ", ".join(
+            x["area"] for x in ctx.get("top3_riesgo", []) if x.get("pct") is not None
+        ) or "las áreas identificadas"
+        n_students = ctx.get("n_estudiantes", "N/A")
+
+        # Calibrate realistic objective range based on ZERO Programme guidance:
+        # ZERO recommends 10-20% reduction as realistic for year 1
+        if risk_val and risk_val >= 60:
+            obj_guidance = (
+                "El riesgo es alto. El Programa ZERO recomienda un objetivo conservador "
+                "para el primer año: reducir entre 10% y 15% el número de estudiantes "
+                "afectados en las áreas más críticas. Un objetivo mayor genera frustración."
+            )
+        elif risk_val and risk_val >= 40:
+            obj_guidance = (
+                "El riesgo es moderado-alto. El Programa ZERO recomienda apuntar a una "
+                "reducción del 15% en las áreas más críticas, combinada con 2-3 iniciativas "
+                "de prevención nuevas durante el ciclo escolar."
+            )
+        elif risk_val and risk_val >= 20:
+            obj_guidance = (
+                "El riesgo es moderado. El Programa ZERO recomienda mantener las áreas "
+                "bajo control y reducir un 10% en las áreas que aún requieren atención, "
+                "con foco en fortalecer los factores protectores."
+            )
+        else:
+            obj_guidance = (
+                "El riesgo es bajo o no disponible. Formula un objetivo de mantenimiento "
+                "y mejora incremental: implementar al menos 3 actividades preventivas nuevas "
+                "y realizar la encuesta de seguimiento al final del ciclo."
+            )
+
         instructions = (
             f"## Capítulo 5: {title}\n\n"
             f"INSTRUCCIONES ESTRICTAS:\n"
-            f"- Máximo 400 palabras en total.\n"
-            f"- Basándote en el Plan de Acción ZERO y los datos de esta escuela específica:\n"
-            f"  **Objetivo del año**: 1 objetivo cuantificable y realista para este establecimiento.\n"
-            f"  **Próximas 2 semanas**: 2 acciones concretas e inmediatas.\n"
-            f"  **Próximo mes**: 2 acciones de mediano plazo.\n"
-            f"  **Durante el ciclo escolar**: 2 iniciativas permanentes.\n"
-            f"- Cada acción: 1 oración, verbo en infinitivo, específica para esta escuela.\n"
-            f"- El objetivo debe incluir un número (ej: 'reducir en un 20%' o 'implementar 3 actividades').\n"
+            f"- Máximo 500 palabras en total.\n"
+            f"- Este capítulo sigue la estructura oficial del Plan de Acción del Programa ZERO "
+            f"  (5 partes: objetivo, descubrir, resolver, prevenir, continuidad).\n"
+            f"\n"
+            f"**OBJETIVO DEL AÑO**\n"
+            f"- Formula 1 objetivo cuantificable y realista basado en los datos de esta escuela.\n"
+            f"- Guía de calibración: {obj_guidance}\n"
+            f"- El objetivo debe mencionar: QUÉ se reducirá o mejorará, en CUÁNTO, y para CUÁNDO.\n"
+            f"- Ejemplo correcto: 'Reducir en un 12% el número de estudiantes que reportan "
+            f"  victimización frecuente, pasando de X a Y estudiantes afectados para junio.'\n"
+            f"- NUNCA pongas un porcentaje mayor al 20% en el primer año.\n"
+            f"\n"
+            f"**ACCIONES PARA DESCUBRIR EL BULLYING** (extraídas del material ZERO)\n"
+            f"- 2 acciones concretas: encuesta anual + supervisión visible en espacios de riesgo.\n"
+            f"- Para supervisión: mencionar el sistema de chaquetas/petos identificables del Programa ZERO.\n"
+            f"\n"
+            f"**ACCIONES PARA RESOLVER CASOS** (extraídas del material ZERO)\n"
+            f"- 2 acciones: protocolo de respuesta ante incidente + trabajo post-incidente con el curso.\n"
+            f"- Específicas para las áreas más críticas de esta escuela: {top3_areas}.\n"
+            f"\n"
+            f"**ACCIONES DE PREVENCIÓN** (extraídas del material ZERO)\n"
+            f"- 2 acciones dirigidas a las relaciones más débiles identificadas por la encuesta.\n"
+            f"- Basarse en los datos demográficos: qué grupos necesitan más atención en esta escuela.\n"
+            f"\n"
+            f"**CONTINUIDAD Y SEGUIMIENTO**\n"
+            f"- 1 iniciativa permanente (ej: área de seguridad demarcada, mascota del programa).\n"
+            f"- Fecha de revisión del plan: cuándo se evaluará si el objetivo se cumplió.\n"
+            f"\n"
+            f"REGLAS ADICIONALES:\n"
+            f"- Cada acción: 1-2 oraciones, verbo en infinitivo, específica para esta escuela.\n"
+            f"- Las acciones deben venir de los manuales ZERO — no inventes estrategias genéricas.\n"
             f"- NO repitas recomendaciones ya mencionadas en capítulos anteriores.\n"
             f"- Cierra con 1 oración motivacional firmada: *Equipo TECH4ZERO-MX*.\n"
         )
