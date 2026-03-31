@@ -1807,6 +1807,9 @@ def main():
 
         # Generate all 5 chapters
         try:
+            client = anthropic.Anthropic(
+                api_key=st.secrets.get("ANTHROPIC_API_KEY", os.getenv("ANTHROPIC_API_KEY", ""))
+            )
             status_text.markdown(f"⏳ Generando Capítulo 1 de {len(CHAPTERS)}...")
 
             chapters_list, full_document = generate_full_report(
