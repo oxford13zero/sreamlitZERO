@@ -1617,411 +1617,147 @@ def main():
     st.markdown("---")
 
     # ════════════════════════════════════════════════════════════
-    # SECTION 10: LLM REPORT
+    # SECTION 10: FULL DIRECTOR REPORT (5 chapters + PDF)
     # ════════════════════════════════════════════════════════════
 
-    st.header("📝 10. Informe para Directores")
+    st.header("📝 10. Informe Completo para el Director")
     st.markdown(
-        "Genera un reporte en lenguaje claro y accesible, pensado para directores y "
-        "personal directivo — sin tecnicismos estadísticos."
+        "Genera un informe ejecutivo de 5 capítulos basado en los datos de la encuesta "
+        "y en los manuales del Programa ZERO. El documento puede descargarse como PDF."
     )
 
-    # ── Country / language context ───────────────────────────
-    COUNTRY_CONTEXT = {
-        "MX": {
-            "idioma":        "español mexicano",
-            "pais":          "México",
-            "marco":         "Nueva Escuela Mexicana (NEM)",
-            "ley":           "Ley General de Educación y protocolos SEP contra el acoso escolar",
-            "director_title":"Director(a)",
-            "escuela_term":  "plantel",
-            "bullying_term": "acoso escolar",
-            "saludo":        "Estimado(a) Director(a):",
-        },
-        "CL": {
-            "idioma":        "español chileno",
-            "pais":          "Chile",
-            "marco":         "Política de Convivencia Educativa del MINEDUC",
-            "ley":           "Ley de Violencia Escolar (Ley 20.536) y protocolos MINEDUC",
-            "director_title":"Director(a) / Jefe(a) de UTP",
-            "escuela_term":  "establecimiento educacional",
-            "bullying_term": "acoso escolar",
-            "saludo":        "Estimado(a) Director(a):",
-        },
-        "US": {
-            "idioma":        "English",
-            "pais":          "United States",
-            "marco":         "School Safety and Anti-Bullying Policy",
-            "ley":           "applicable federal and state anti-bullying regulations",
-            "director_title":"Principal",
-            "escuela_term":  "school",
-            "bullying_term": "bullying",
-            "saludo":        "Dear Principal,",
-        },
-    }
-    # Resolve country context — fallback to MX if unknown code
-    country_ctx = COUNTRY_CONTEXT.get(school_country.upper(), COUNTRY_CONTEXT["MX"])
+    # ── Import report modules ─────────────────────────────────
+    from manual_loader import load_category, load_action_plan, get_manual_status
+    from report_generator import generate_full_report, markdown_to_pdf, CHAPTERS
 
-    # ── Build data context for the prompt ────────────────────
-    def _build_report_context(
-        school_name, filtered_df, prevalence_data,
-        substantive_constructs, get_construct_metadata_fn,
-        country_ctx: dict,
-    ) -> dict:
-        """
-        Assemble a compact, structured dict with all analysis results
-        needed to generate the director report. Avoids passing raw DataFrames
-        to the prompt — only serializable primitives.
-        """
-        n = len(filtered_df)
+    # ── Manual status panel ───────────────────────────────────
+    manual_status = get_manual_status()
+    total_manuals = sum(v for k, v in manual_status.items() if k != 'plan_de_accion')
+    plan_loaded   = manual_status.get('plan_de_accion', 0) == 1
 
-        # ── Prevalence summary ────────────────────────────────
-        prev_summary = {}
-        for construct, prev in prevalence_data.items():
-            meta = get_construct_metadata_fn(construct)
-            label = meta.display_name if meta else construct
-            prev_summary[label] = {
-                "pct":      round(prev.pct, 1) if not np.isnan(prev.pct) else None,
-                "n":        int(prev.n_true),
-                "categoria": prev.threshold_category,
-            }
-
-        # ── Top 3 risk areas ─────────────────────────────────
-        risk_constructs = {
-            meta_name: data
-            for meta_name, data in prev_summary.items()
-            if data["pct"] is not None
+    with st.expander("📚 Estado de los manuales cargados"):
+        col_m1, col_m2, col_m3, col_m4, col_m5 = st.columns(5)
+        labels = {
+            'fenomeno':      '🔍 Fenómeno',
+            'enfoque':       '🔗 Enfoque',
+            'intervencion':  '🛡️ Intervención',
+            'prevencion':    '🌱 Prevención',
+            'plan_de_accion':'📋 Plan de Acción',
         }
-        top3 = sorted(risk_constructs.items(), key=lambda x: x[1]["pct"], reverse=True)[:3]
+        for col, (key, label) in zip(
+            [col_m1, col_m2, col_m3, col_m4, col_m5],
+            labels.items()
+        ):
+            count = manual_status.get(key, 0)
+            icon  = "✅" if count > 0 else "⚠️"
+            col.metric(label, f"{icon} {count} archivo{'s' if count != 1 else ''}")
 
-        # ── Demographics ──────────────────────────────────────
-        demo_summary = {}
-        for col, label in [('genero', 'Género'), ('edad', 'Edad'), ('tipo_escuela', 'Nivel escolar')]:
-            if col in filtered_df.columns:
-                vc = filtered_df[col].value_counts(normalize=True).round(3)
-                demo_summary[label] = {str(k): f"{v*100:.1f}%" for k, v in vc.items()}
-
-        # ── Typology ─────────────────────────────────────────
-        typology_summary = {}
-        if 'bully_victim_type' in filtered_df.columns:
-            vc = filtered_df['bully_victim_type'].value_counts(normalize=True).round(3)
-            typology_summary = {str(k): f"{v*100:.1f}%" for k, v in vc.items()}
-
-        # ── Cyberbullying overlap ─────────────────────────────
-        cyber_overlap = None
-        if ('victimizacion_freq' in filtered_df.columns and
-                'cybervictimizacion_freq' in filtered_df.columns):
-            n_trad  = int(filtered_df['victimizacion_freq'].sum())
-            n_cyber = int(filtered_df['cybervictimizacion_freq'].sum()) \
-                if 'cybervictimizacion_freq' in filtered_df.columns else 0
-            n_both  = int(
-                (filtered_df['victimizacion_freq'] & filtered_df['cybervictimizacion_freq']).sum()
-            ) if n_cyber > 0 else 0
-            cyber_overlap = {
-                "victimas_tradicionales": n_trad,
-                "cibervictimas":          n_cyber,
-                "ambos":                  n_both,
-            }
-
-        # ── Risk index ───────────────────────────────────────
-        risk_idx = calculate_risk_index(filtered_df)
-        risk_summary = {
-            "indice":     round(risk_idx.ssri, 1) if not np.isnan(risk_idx.ssri) else None,
-            "semaforo":   risk_idx.threshold_color,
-        }
-
-        return {
-            "escuela":        school_name,
-            "n_estudiantes":  n,
-            "prevalencias":   prev_summary,
-            "top3_riesgo":    [{"area": k, "pct": v["pct"], "categoria": v["categoria"]}
-                               for k, v in top3],
-            "demograficos":   demo_summary,
-            "tipologia":      typology_summary,
-            "cyber_overlap":  cyber_overlap,
-            "indice_riesgo":  risk_summary,
-            "fecha":          datetime.now().strftime("%d de %B de %Y"),
-            # Country / language context (injected from COUNTRY_CONTEXT)
-            "idioma":         country_ctx["idioma"],
-            "pais":           country_ctx["pais"],
-            "marco":          country_ctx["marco"],
-            "ley":            country_ctx["ley"],
-            "director_title": country_ctx["director_title"],
-            "escuela_term":   country_ctx["escuela_term"],
-            "bullying_term":  country_ctx["bullying_term"],
-            "saludo":         country_ctx["saludo"],
-        }
-
-    def _build_director_prompt(ctx: dict) -> str:
-        """
-        Build the Claude prompt for the director report.
-        Instructs the model to write in plain Spanish (~1000 words),
-        avoiding statistical jargon, for a school principal audience.
-
-        Key improvements over v1:
-        - Separates instructions from content template (avoids bracket confusion)
-        - Explicit word count target
-        - Handles null/missing data gracefully
-        - Guía de interpretación placed BEFORE the data (not after)
-        """
-        # Pre-translate category labels so Claude never sees raw technical terms
-        cat_map = {
-            "CRISIS":       "situación de emergencia que requiere acción inmediata",
-            "INTERVENCION": "situación preocupante que requiere atención urgente",
-            "ATENCION":     "situación que merece seguimiento y atención",
-            "MONITOREO":    "situación bajo control — mantener el buen trabajo",
-            "SIN_DATOS":    None,  # will be filtered out
-        }
-
-        risk_val = ctx.get("indice_riesgo", {}).get("indice")
-        if risk_val is None:
-            risk_label = "no disponible para este análisis"
-        elif risk_val >= 60:
-            risk_label = "alto"
-        elif risk_val >= 40:
-            risk_label = "moderado-alto"
-        elif risk_val >= 20:
-            risk_label = "moderado"
-        else:
-            risk_label = "bajo"
-
-        # Build human-readable prevalence lines (filter out SIN_DATOS)
-        prev_lines = []
-        for area, data in ctx.get("prevalencias", {}).items():
-            cat = cat_map.get(data.get("categoria", ""), None)
-            pct = data.get("pct")
-            if cat is None or pct is None:
-                continue
-            prev_lines.append(f'  - {area}: {pct}% de estudiantes afectados — {cat}')
-        prev_block = "\n".join(prev_lines) if prev_lines else "  - Sin datos suficientes"
-
-        # Build top 3 risk areas in plain language
-        top3_lines = []
-        for item in ctx.get("top3_riesgo", []):
-            cat = cat_map.get(item.get("categoria", ""), "requiere atención")
-            top3_lines.append(f'  - {item["area"]} ({item["pct"]}%): {cat}')
-        top3_block = "\n".join(top3_lines) if top3_lines else "  - Sin datos suficientes"
-
-        # Demographics block
-        demo_lines = []
-        for label, dist in ctx.get("demograficos", {}).items():
-            vals = ", ".join(f"{k}: {v}" for k, v in dist.items())
-            demo_lines.append(f"  - {label}: {vals}")
-        demo_block = "\n".join(demo_lines) if demo_lines else "  - Sin datos demográficos"
-
-        # Cyber overlap block
-        cyber = ctx.get("cyber_overlap")
-        if cyber:
-            cyber_block = (
-                f"  - Estudiantes con bullying tradicional: {cyber['victimas_tradicionales']}\n"
-                f"  - Estudiantes con cyberbullying: {cyber['cibervictimas']}\n"
-                f"  - Estudiantes afectados en ambos: {cyber['ambos']}"
+        if total_manuals == 0 and not plan_loaded:
+            st.warning(
+                "⚠️ No se encontraron manuales en /manuales/. "
+                "El informe usará solo los datos de la encuesta."
             )
-        else:
-            cyber_block = "  - Sin datos de cyberbullying disponibles"
 
-        # Typology block
-        tipo = ctx.get("tipologia", {})
-        tipo_block = "\n".join(f"  - {k}: {v}" for k, v in tipo.items())             if tipo else "  - Sin datos de tipología"
-
-        # Language-specific phrasing examples
-        if ctx["idioma"] == "English":
-            fraction_examples = '"almost half", "1 in 3", "the majority", "a significant minority"'
-            prohibited_terms  = ("prevalence, percentile, 95% CI, Cronbach, p-value, "
-                                 "chi-square, correlation, construct, variable, n=, "
-                                 "statistically significant, coefficient")
-        elif ctx["idioma"] == "español chileno":
-            fraction_examples = '"casi la mitad", "1 de cada 3", "la mayoría", "un grupo importante"'
-            prohibited_terms  = ("prevalencia, percentil, IC 95%, Cronbach, p-valor, "
-                                 "chi-cuadrado, correlación, constructo, variable, n=, "
-                                 "estadísticamente significativo, coeficiente")
-        else:  # español mexicano
-            fraction_examples = '"casi la mitad", "1 de cada 3", "la mayoría", "una minoría importante"'
-            prohibited_terms  = ("prevalencia, percentil, IC 95%, Cronbach, p-valor, "
-                                 "chi-cuadrado, correlación, constructo, variable, n=, "
-                                 "estadísticamente significativo, coeficiente")
-
-        return f"""You are a school climate and bullying prevention specialist with deep knowledge of {ctx['pais']}.
-Write a complete executive report for the {ctx['director_title']} of the {ctx['escuela_term']} "{ctx['escuela']}",
-based on a school climate survey completed by {ctx['n_estudiantes']} students on {ctx['fecha']}.
-
-════════════════════════════════════════
-WRITING RULES — MANDATORY
-════════════════════════════════════════
-1. Write ENTIRELY in {ctx['idioma']}. Do not mix languages.
-2. Target length: between 900 and 1100 words total.
-3. The normative framework to reference is: {ctx['marco']}.
-   When recommending institutional actions, cite: {ctx['ley']}.
-4. Use the term "{ctx['bullying_term']}" — avoid anglicisms or technical jargon.
-5. FORBIDDEN technical terms (never use these): {prohibited_terms}.
-6. Instead of exact percentages, use proportional phrases like: {fraction_examples}.
-7. Tone: professional, warm, action-oriented. Not alarmist, not condescending.
-8. If any data value is null or "not available", silently omit that subsection.
-9. Do not invent data. If information is insufficient, omit the topic entirely.
-
-════════════════════════════════════════
-DATOS DE LA ENCUESTA (ya interpretados)
-════════════════════════════════════════
-
-NIVEL DE RIESGO GENERAL DE LA ESCUELA: {risk_label}
-
-HALLAZGOS POR ÁREA (de mayor a menor urgencia):
-{prev_block}
-
-LAS 3 ÁREAS MÁS PREOCUPANTES:
-{top3_block}
-
-DISTRIBUCIÓN DE ESTUDIANTES POR PERFIL:
-{tipo_block}
-
-BULLYING TRADICIONAL VS. DIGITAL:
-{cyber_block}
-
-COMPOSICIÓN DE LOS ESTUDIANTES ENCUESTADOS:
-{demo_block}
-
-════════════════════════════════════════
-MANDATORY REPORT STRUCTURE
-════════════════════════════════════════
-Write exactly the following sections in this order using markdown headings.
-Do not add extra sections.
-
-### {ctx['saludo']}
-Write 3-4 sentences introducing the survey: its purpose, number of students
-who participated, date, and why this report matters. Do not include results here.
-
-### 1. Current School Situation / Situación Actual
-Write 2-3 paragraphs. Describe the overall picture using the risk level in simple
-language. Mention the most important findings without overwhelming with numbers.
-Be honest but constructive.
-
-### 2. Areas Requiring Greatest Attention / Áreas de Mayor Atención
-Write a list of 3 to 5 points. Each point must have:
-- A short bold title
-- 2-3 sentences explaining what students reported and why it matters
-Order them from most to least urgent based on the data.
-
-### 3. Groups Needing Priority Support / Grupos con Mayor Vulnerabilidad
-Write 1-2 paragraphs on whether any student group (by gender, age, school level)
-shows greater vulnerability. If no clear differences exist, frame it positively:
-the situation affects the whole community equally and actions should be universal.
-
-### 4. Concrete Recommendations / Recomendaciones Concretas
-Write a numbered list of 5 to 7 specific, actionable steps the {ctx['director_title']}
-can implement. Each must start with an action verb and be realistic for a
-{ctx['pais']} school. Order from immediate to medium-term (1-6 months).
-
-### 5. Next Steps / Próximos Pasos
-Write 3-4 actions organized under exactly these three time horizons
-(translate the labels to {ctx['idioma']}):
-**Next two weeks / Próximas dos semanas:**
-**Next month / Próximo mes:**
-**Throughout the school year / Durante el ciclo escolar:**
-
-### Closing Note / Nota Final
-Write 2-3 closing sentences acknowledging the school's commitment and motivating
-action. End with the signature: *Equipo TECH4ZERO-MX*
-
-════════════════════════════════════════
-FINAL INSTRUCTION
-════════════════════════════════════════
-Write the complete report now. Begin directly with:
-### {ctx['saludo']}
-Do not include any text before that line. Do not explain what you are about to do.
-Do not add comments at the end. Just the report.
-"""
-
-    # ── Build context ─────────────────────────────────────────
-    ctx = _build_report_context(
+    # ── Build report context ──────────────────────────────────
+    ctx_report = _build_report_context(
         school_name, filtered_df, prevalence_data,
         substantive_constructs, get_construct_metadata,
         country_ctx=country_ctx,
     )
+    # Add school_country for report_generator
+    ctx_report['school_country'] = school_country
 
     # ── REPORT MODE ───────────────────────────────────────────
-    # DEV: cheap/fast summary for testing — uncomment the PROD block and
-    #      comment this block when going to production.
-    top3_str = ", ".join(
-        f"{x['area']} ({x['pct']}%)" for x in ctx.get("top3_riesgo", [])
-    ) or "sin datos"
-    risk_str = str(ctx.get("indice_riesgo", {}).get("indice", "N/A"))
-    prompt = (
-        f"Write a SHORT 3-paragraph school bullying summary in {ctx['idioma']} "
-        f"for the principal of '{ctx['escuela']}'. "
-        f"Use plain language, no statistics jargon. "
-        f"Data: {ctx['n_estudiantes']} students surveyed. "
-        f"Top concerns: {top3_str}. Risk level: {risk_str}. "
-        f"Framework: {ctx['marco']}. "
-        f"Paragraph 1: overall situation. "
-        f"Paragraph 2: top concerns. "
-        f"Paragraph 3: 3 quick actions. "
-        f"Start directly with the content, no preamble."
-    )
-    model       = "claude-haiku-4-5"   # ~$0.00 per report
-    max_tokens  = 500
-    spinner_msg = "⚡ Generando resumen..."
-    btn_label   = "🧪 Generar Resumen (modo prueba)"
+    # DEV: uses Haiku, ~200 words per chapter, minimal cost.
+    # Uncomment PROD block and comment DEV block when going to production.
 
-    # ── PROD: full report — uncomment this block for production ──
-    # prompt      = _build_director_prompt(ctx)
-    # model       = "claude-opus-4-5"   # ~$0.02-0.05 per report
-    # max_tokens  = 3000
-    # spinner_msg = "✍️ Redactando informe completo para el director..."
-    # btn_label   = "🤖 Generar Informe Completo"
-    # ─────────────────────────────────────────────────────────────
+    # DEV ─────────────────────────────────────────────────────
+    report_model            = "claude-haiku-4-5"   # ~$0.00
+    max_tokens_per_chapter  = 300
+    btn_label               = "🧪 Generar Informe (modo prueba)"
+    mode_caption            = "Modo prueba — Haiku · ~$0.00 · ~200 palabras por capítulo"
 
-    col_btn, col_info = st.columns([1, 3])
-    with col_btn:
-        generate = st.button(btn_label, type="primary")
-    with col_info:
-        st.caption("Modo prueba activo — ~$0.00 por generación · ~200 palabras")
-        # st.caption("Modo producción — ~$0.02-0.05 por generación · ~1000 palabras")
+    # PROD ────────────────────────────────────────────────────
+    # report_model            = "claude-opus-4-5"   # ~$0.05-0.10 total
+    # max_tokens_per_chapter  = 1000
+    # btn_label               = "📄 Generar Informe Completo"
+    # mode_caption            = "Modo producción — Opus · ~$0.05-0.10 · ~600 palabras por capítulo"
+    # ─────────────────────────────────────────────────────────
 
-    if generate:
-        with st.spinner(spinner_msg):
-            try:
-                client = anthropic.Anthropic(
-                    api_key=st.secrets.get("ANTHROPIC_API_KEY", os.getenv("ANTHROPIC_API_KEY", ""))
-                )
+    st.caption(mode_caption)
+    generate_report = st.button(btn_label, type="primary")
 
-                message = client.messages.create(
-                    model=model,
-                    max_tokens=max_tokens,
-                    messages=[{"role": "user", "content": prompt}],
-                )
+    if generate_report:
 
-                report_text = message.content[0].text
+        # Load manual texts (cached after first load)
+        with st.spinner("📖 Cargando manuales..."):
+            manual_texts = {
+                "fenomeno":     load_category("fenomeno"),
+                "enfoque":      load_category("enfoque"),
+                "intervencion": load_category("intervencion"),
+                "prevencion":   load_category("prevencion"),
+                "plan_de_accion": load_action_plan(),
+            }
 
-                st.markdown("---")
-                st.markdown(report_text)
-                st.markdown("---")
+        # Progress tracking
+        progress_bar  = st.progress(0)
+        status_text   = st.empty()
+        chapters_done = []
 
-                # Download buttons — enable in production
-                # col_dl1, col_dl2 = st.columns(2)
-                # with col_dl1:
-                #     st.download_button(
-                #         label="📄 Descargar como .txt",
-                #         data=report_text,
-                #         file_name=f"informe_{school_name.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.txt",
-                #         mime="text/plain",
-                #     )
-                # with col_dl2:
-                #     st.download_button(
-                #         label="📝 Descargar como .md",
-                #         data=report_text,
-                #         file_name=f"informe_{school_name.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.md",
-                #         mime="text/markdown",
-                #     )
+        def on_chapter_done(chapter_num, chapter_title, text):
+            chapters_done.append(text)
+            progress_bar.progress(chapter_num / len(CHAPTERS))
+            status_text.markdown(
+                f"✅ Capítulo {chapter_num} de {len(CHAPTERS)} completado: "
+                f"*{chapter_title}*"
+            )
 
-            except anthropic.AuthenticationError:
-                st.error(
-                    "❌ API key de Anthropic no configurada o inválida. "
-                    "Agrega ANTHROPIC_API_KEY en los secrets de Streamlit Cloud."
-                )
-            except Exception as e:
-                st.error(f"❌ Error al generar el informe: {e}")
-                import traceback
-                st.code(traceback.format_exc())
+        # Generate all 5 chapters
+        try:
+            status_text.markdown(f"⏳ Generando Capítulo 1 de {len(CHAPTERS)}...")
+
+            chapters_list, full_document = generate_full_report(
+                ctx=ctx_report,
+                manual_texts=manual_texts,
+                client=client,
+                model=report_model,
+                max_tokens_per_chapter=max_tokens_per_chapter,
+                progress_callback=on_chapter_done,
+            )
+
+            progress_bar.progress(1.0)
+            status_text.markdown("✅ Informe completo generado")
+
+            # Preview
+            st.markdown("---")
+            with st.expander("👁️ Vista previa del informe", expanded=True):
+                st.markdown(full_document)
+            st.markdown("---")
+
+            # PDF download
+            with st.spinner("📄 Generando PDF..."):
+                pdf_bytes = markdown_to_pdf(full_document, school_name)
+
+            file_date = datetime.now().strftime("%Y%m%d")
+            safe_name = school_name.replace(" ", "_").replace("/", "-")
+
+            st.download_button(
+                label="📥 Descargar Informe PDF",
+                data=pdf_bytes,
+                file_name=f"informe_TECH4ZERO_{safe_name}_{file_date}.pdf",
+                mime="application/pdf",
+                type="primary",
+            )
+
+        except anthropic.AuthenticationError:
+            st.error(
+                "❌ API key de Anthropic no configurada o inválida. "
+                "Agrega ANTHROPIC_API_KEY en los secrets de Streamlit Cloud."
+            )
+        except Exception as e:
+            st.error(f"❌ Error al generar el informe: {e}")
+            import traceback
+            st.code(traceback.format_exc())
 
     # ── Footer ────────────────────────────────────────────────
     st.markdown("---")
