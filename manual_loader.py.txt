@@ -1,0 +1,186 @@
+# manual_loader.py
+"""
+TECH4ZERO-MX — Manual Loader
+=============================
+Extracts and caches text from the ZERO programme manuals stored in /manuales/.
+
+Folder structure expected in the repository root:
+    manuales/
+    ├── fenomeno/        ← 4 PDFs/DOCX about the bullying phenomenon
+    ├── enfoque/         ← 4 PDFs/DOCX about the integrated approach
+    ├── intervencion/    ← 4 PDFs/DOCX about how to intervene
+    ├── prevencion/      ← 4 PDFs/DOCX about prevention
+    └── plan_de_accion_zero.md
+
+Supports: .pdf, .docx, .txt, .md
+"""
+
+import os
+import re
+import streamlit as st
+
+# ── Keywords that identify action-relevant sections ──────────────────────────
+ACTION_KEYWORDS = [
+    # Spanish
+    'intervención', 'intervencion', 'acción', 'accion', 'protocolo',
+    'recomendación', 'recomendacion', 'estrategia', 'implementar',
+    'aplicar', 'paso', 'procedimiento', 'actividad', 'plan',
+    'prevención', 'prevencion', 'resolución', 'resolucion',
+    'descubrir', 'detectar', 'supervisión', 'supervision',
+    'seguimiento', 'respuesta', 'comunidad', 'familia', 'padres',
+    # English (Programme Zero originals may appear)
+    'intervention', 'action', 'protocol', 'recommendation',
+    'strategy', 'implement', 'procedure', 'step', 'prevention',
+    'detection', 'follow-up', 'response',
+]
+
+MAX_CHARS_PER_CATEGORY = 25_000   # ~6,000 tokens — safe for Claude context
+MAX_CHARS_PLAN         = 40_000   # full plan de acción document
+
+
+# ── Text extraction ───────────────────────────────────────────────────────────
+
+def _extract_pdf(path: str) -> str:
+    """Extract text from a PDF using pdfplumber (best for text PDFs)."""
+    try:
+        import pdfplumber
+        text_parts = []
+        with pdfplumber.open(path) as pdf:
+            for page in pdf.pages:
+                t = page.extract_text()
+                if t:
+                    text_parts.append(t)
+        return "\n".join(text_parts)
+    except Exception as e:
+        return f"[Error reading PDF {os.path.basename(path)}: {e}]"
+
+
+def _extract_docx(path: str) -> str:
+    """Extract text from a .docx file using python-docx."""
+    try:
+        from docx import Document
+        doc = Document(path)
+        return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+    except Exception as e:
+        return f"[Error reading DOCX {os.path.basename(path)}: {e}]"
+
+
+def _extract_text_file(path: str) -> str:
+    """Read plain text or markdown files."""
+    try:
+        with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+            return f.read()
+    except Exception as e:
+        return f"[Error reading file {os.path.basename(path)}: {e}]"
+
+
+def _extract_file(path: str) -> str:
+    """Route to the correct extractor based on file extension."""
+    ext = os.path.splitext(path)[1].lower()
+    if ext == '.pdf':
+        return _extract_pdf(path)
+    elif ext == '.docx':
+        return _extract_docx(path)
+    elif ext in ('.txt', '.md'):
+        return _extract_text_file(path)
+    else:
+        return ""
+
+
+# ── Section filtering ─────────────────────────────────────────────────────────
+
+def _filter_relevant_sections(text: str, max_chars: int) -> str:
+    """
+    From a large text, extract paragraphs that contain action keywords.
+    Falls back to the full text (truncated) if no keywords are found.
+    """
+    if not text:
+        return ""
+
+    paragraphs = [p.strip() for p in re.split(r'\n{2,}', text) if p.strip()]
+    relevant = []
+    total = 0
+
+    for para in paragraphs:
+        para_lower = para.lower()
+        if any(kw in para_lower for kw in ACTION_KEYWORDS):
+            relevant.append(para)
+            total += len(para)
+            if total >= max_chars:
+                break
+
+    # Fallback: no keywords matched → use full text truncated
+    if not relevant:
+        return text[:max_chars]
+
+    return "\n\n".join(relevant)[:max_chars]
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=3600)
+def load_category(category: str, base_dir: str = "manuales") -> str:
+    """
+    Load and filter text from all files in a category subfolder.
+
+    Args:
+        category: 'fenomeno' | 'enfoque' | 'intervencion' | 'prevencion'
+        base_dir: root folder (default 'manuales')
+
+    Returns:
+        Filtered text string, max ~25,000 chars.
+        Returns empty string if folder not found.
+    """
+    folder = os.path.join(base_dir, category)
+    if not os.path.isdir(folder):
+        return ""
+
+    all_text_parts = []
+    for fname in sorted(os.listdir(folder)):
+        fpath = os.path.join(folder, fname)
+        if not os.path.isfile(fpath):
+            continue
+        raw = _extract_file(fpath)
+        if raw:
+            all_text_parts.append(f"### [{fname}]\n{raw}")
+
+    combined = "\n\n".join(all_text_parts)
+    return _filter_relevant_sections(combined, MAX_CHARS_PER_CATEGORY)
+
+
+@st.cache_data(ttl=3600)
+def load_action_plan(base_dir: str = "manuales") -> str:
+    """
+    Load the full Plan de Acción ZERO document.
+
+    Returns:
+        Full text of plan_de_accion_zero.md (up to MAX_CHARS_PLAN chars).
+        Returns empty string if file not found.
+    """
+    path = os.path.join(base_dir, "plan_de_accion_zero.md")
+    if not os.path.isfile(path):
+        return ""
+    text = _extract_text_file(path)
+    return text[:MAX_CHARS_PLAN]
+
+
+def get_manual_status(base_dir: str = "manuales") -> dict:
+    """
+    Returns a status dict for each category — useful for the UI to show
+    which manuals are loaded and how many files per category.
+    """
+    categories = ['fenomeno', 'enfoque', 'intervencion', 'prevencion']
+    status = {}
+    for cat in categories:
+        folder = os.path.join(base_dir, cat)
+        if os.path.isdir(folder):
+            files = [f for f in os.listdir(folder)
+                     if os.path.isfile(os.path.join(folder, f))
+                     and os.path.splitext(f)[1].lower() in ('.pdf', '.docx', '.txt', '.md')]
+            status[cat] = len(files)
+        else:
+            status[cat] = 0
+
+    plan_path = os.path.join(base_dir, "plan_de_accion_zero.md")
+    status['plan_de_accion'] = 1 if os.path.isfile(plan_path) else 0
+    return status
