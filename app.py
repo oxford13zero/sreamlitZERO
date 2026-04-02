@@ -1783,7 +1783,8 @@ def main():
 
         # DEBUG — remove after testing
         st.write("Columns with grado/escuela/nivel:", [c for c in filtered_df.columns if 'grado' in c or 'escuela' in c or 'nivel' in c])
-
+        st.write("All filtered_df columns:", list(filtered_df.columns))
+        
         subgrupos_reporte = {
             "agresion_por_grado":       _prev_by_group(filtered_df, "perpetracion_freq",  "grado"),
             "victimizacion_por_grado":  _prev_by_group(filtered_df, "victimizacion_freq", "grado"),
