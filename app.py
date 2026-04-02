@@ -1776,6 +1776,14 @@ def main():
                 rows.append({"grupo": str(grp), "pct": pct, "n": n_true, "n_total": n_grp})
             return sorted(rows, key=lambda x: x["pct"], reverse=True)
 
+        # Extract grado from tipo_escuela if not already in filtered_df
+        if 'grado' not in filtered_df.columns and 'tipo_escuela' in filtered_df.columns:
+            filtered_df = filtered_df.copy()
+            filtered_df['grado'] = filtered_df['tipo_escuela']
+
+        # DEBUG — remove after testing
+        st.write("Columns with grado/escuela/nivel:", [c for c in filtered_df.columns if 'grado' in c or 'escuela' in c or 'nivel' in c])
+
         subgrupos_reporte = {
             "agresion_por_grado":       _prev_by_group(filtered_df, "perpetracion_freq",  "grado"),
             "victimizacion_por_grado":  _prev_by_group(filtered_df, "victimizacion_freq", "grado"),
@@ -1785,7 +1793,12 @@ def main():
 
         # ── Ecology hotspots: all spaces sorted highest to lowest ──
         ecologia_reporte = []
-        ecologia_cols = [c for c in filtered_df.columns if c.startswith('ecologia_')]
+        ecologia_cols = [
+            c for c in filtered_df.columns
+            if c.startswith('ecologia_')
+            and '_sum' not in c
+            and '_freq' not in c
+        ]
         for col in ecologia_cols:
             label = col.replace('ecologia_', '').replace('_v2', '').replace('_', ' ').title()
             scores = filtered_df[col].dropna()
