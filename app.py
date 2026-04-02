@@ -271,6 +271,15 @@ def load_survey_data(school_id=None, analysis_dt=None):
             if 'resp_id' in students_df.columns:
                 students_df = students_df.drop(columns=['resp_id'])
 
+        # Map survey_id to grade level
+        survey_grade_map = {
+            '9e26dfc3-8310-4192-a8fc-a02e72078060': 'Secundaria',
+            'a78ed800-8e84-48d5-a350-64e4b60bcd11': 'Primaria',
+            '7298ab4e-e4e6-4d58-a865-4b617f76a0e9': 'Middle',
+            '6cfc1984-b32c-4340-8dfc-c131c3d70049': 'Elementary',
+        }
+        students_df['grado'] = responses_df['survey_id'].map(survey_grade_map).fillna('Sin datos')
+
         return responses_df, merged, students_df
 
     except Exception as e:
@@ -1783,6 +1792,7 @@ def main():
 
         # DEBUG — remove after testing
         st.write("Columns with grado/escuela/nivel:", [c for c in filtered_df.columns if 'grado' in c or 'escuela' in c or 'nivel' in c])
+        st.write("Grado values:", filtered_df['grado'].value_counts().to_dict() if 'grado' in filtered_df.columns else "grado not found")
         st.write("All filtered_df columns:", list(filtered_df.columns))
         
         subgrupos_reporte = {
