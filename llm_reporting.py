@@ -366,6 +366,57 @@ Identifique la edad con mayor prevalencia de victimización. Mismo formato.
 | Género    | [género] — [pct]%        | [género] — [pct]%             |
 | Edad      | [edad] años — [pct]%     | [edad] años — [pct]%          |
 
+**Tabla: Agresión por Grado (de mayor a menor)**
+
+Usando los datos de `subgrupos_reporte.agresion_por_grado` del JSON, construya esta tabla 
+exactamente en el orden en que aparecen los datos (ya vienen ordenados de mayor a menor).
+Si el dato no está disponible escribir "dato no disponible".
+
+| Ranking | Grado | % Agresores | N agresores | N total grado |
+|---------|-------|-------------|-------------|---------------|
+| 1       | [grupo] | [pct]%  | [n]         | [n_total]     |
+| 2       | ...   | ...         | ...         | ...           |
+
+**Tabla: Victimización por Grado (de mayor a menor)**
+
+Usando los datos de `subgrupos_reporte.victimizacion_por_grado` del JSON, construya esta tabla
+exactamente en el orden en que aparecen los datos (ya vienen ordenados de mayor a menor).
+Si el dato no está disponible escribir "dato no disponible".
+
+| Ranking | Grado | % Víctimas | N víctimas | N total grado |
+|---------|-------|------------|------------|---------------|
+| 1       | [grupo] | [pct]%  | [n]        | [n_total]     |
+| 2       | ...   | ...        | ...        | ...           |
+
+**Tabla: Agresión por Género (de mayor a menor)**
+
+Usando los datos de `subgrupos_reporte.agresion_por_genero` del JSON.
+
+| Ranking | Género | % Agresores | N agresores | N total |
+|---------|--------|-------------|-------------|---------|
+| 1       | [grupo] | [pct]%    | [n]         | [n_total] |
+
+**Tabla: Victimización por Género (de mayor a menor)**
+
+Usando los datos de `subgrupos_reporte.victimizacion_por_genero` del JSON.
+
+| Ranking | Género | % Víctimas | N víctimas | N total |
+|---------|--------|------------|------------|---------|
+| 1       | [grupo] | [pct]%   | [n]        | [n_total] |
+
+**Lugares donde ocurren las agresiones (de mayor a menor)**
+
+Usando los datos de `ecologia_reporte` del JSON (ya vienen ordenados de mayor a menor 
+por puntuación media). Incluya TODOS los espacios disponibles.
+
+| Ranking | Lugar | Puntuación Media (0-4) | % Alta Frecuencia | N estudiantes |
+|---------|-------|------------------------|-------------------|---------------|
+| 1       | [lugar] | [puntuacion_media]   | [pct_alta_frecuencia]% | [n]      |
+| 2       | ...   | ...                    | ...               | ...           |
+
+Agregue una frase de interpretación por cada tabla indicando cuál es el grupo/lugar 
+de mayor riesgo y qué acción concreta se recomienda.
+
 **Implicación para intervención:**
 Los grupos identificados arriba deben ser los primeros destinatarios de las intervenciones 
 focalizadas descritas en la Sección VII.
