@@ -1763,26 +1763,65 @@ def main():
             "componente_protector":round(risk_idx.protective_component, 1) if not np.isnan(risk_idx.protective_component) else None,
         }
 
+        # ── Subgrupos para informe: agresión y victimización por grado y género ──
+        def _prev_by_group(df, freq_col, group_col):
+            """Prevalence of freq_col broken down by group_col, sorted highest to lowest."""
+            if freq_col not in df.columns or group_col not in df.columns:
+                return []
+            rows = []
+            for grp, grp_df in df.groupby(group_col):
+                n_grp   = len(grp_df)
+                n_true  = int(grp_df[freq_col].sum())
+                pct     = round(n_true / n_grp * 100, 1) if n_grp > 0 else 0.0
+                rows.append({"grupo": str(grp), "pct": pct, "n": n_true, "n_total": n_grp})
+            return sorted(rows, key=lambda x: x["pct"], reverse=True)
+
+        subgrupos_reporte = {
+            "agresion_por_grado":       _prev_by_group(filtered_df, "perpetracion_freq",     "grado"),
+            "victimizacion_por_grado":  _prev_by_group(filtered_df, "victimizacion_freq",    "grado"),
+            "agresion_por_genero":      _prev_by_group(filtered_df, "perpetracion_freq",     "genero"),
+            "victimizacion_por_genero": _prev_by_group(filtered_df, "victimizacion_freq",    "genero"),
+        }
+
+        # ── Ecology hotspots: all spaces sorted highest to lowest ──
+        ecologia_reporte = []
+        ecologia_cols = [c for c in filtered_df.columns if c.startswith('ecologia_')]
+        for col in ecologia_cols:
+            label = col.replace('ecologia_', '').replace('_v2', '').replace('_', ' ').title()
+            scores = filtered_df[col].dropna()
+            if len(scores) > 0:
+                mean_score = round(float(scores.mean()), 2)
+                pct_high   = round(float((scores >= 2).mean() * 100), 1)
+                ecologia_reporte.append({
+                    "lugar": label,
+                    "puntuacion_media": mean_score,
+                    "pct_alta_frecuencia": pct_high,
+                    "n": int(len(scores)),
+                })
+        ecologia_reporte = sorted(ecologia_reporte, key=lambda x: x["puntuacion_media"], reverse=True)
+
         return {
-            "escuela":        school_name,
-            "n_estudiantes":  n,
-            "prevalencias":   prev_summary,
-            "top3_riesgo":    [{"area": k, "pct": v["pct"], "n": v["n_afectados"],
-                                "n_total": v["n_total"], "categoria": v["categoria"]}
-                               for k, v in top3],
-            "demograficos":   demo_summary,
-            "tipologia":      typology_summary,
-            "cyber_overlap":  cyber_overlap,
-            "indice_riesgo":  risk_summary,
-            "fecha":          datetime.now().strftime("%d de %B de %Y"),
-            "idioma":         country_ctx["idioma"],
-            "pais":           country_ctx["pais"],
-            "marco":          country_ctx["marco"],
-            "ley":            country_ctx["ley"],
-            "director_title": country_ctx["director_title"],
-            "escuela_term":   country_ctx["escuela_term"],
-            "bullying_term":  country_ctx["bullying_term"],
-            "saludo":         country_ctx["saludo"],
+            "escuela":          school_name,
+            "n_estudiantes":    n,
+            "prevalencias":     prev_summary,
+            "top3_riesgo":      [{"area": k, "pct": v["pct"], "n": v["n_afectados"],
+                                  "n_total": v["n_total"], "categoria": v["categoria"]}
+                                 for k, v in top3],
+            "demograficos":     demo_summary,
+            "tipologia":        typology_summary,
+            "cyber_overlap":    cyber_overlap,
+            "indice_riesgo":    risk_summary,
+            "subgrupos_reporte": subgrupos_reporte,
+            "ecologia_reporte": ecologia_reporte,
+            "fecha":            datetime.now().strftime("%d de %B de %Y"),
+            "idioma":           country_ctx["idioma"],
+            "pais":             country_ctx["pais"],
+            "marco":            country_ctx["marco"],
+            "ley":              country_ctx["ley"],
+            "director_title":   country_ctx["director_title"],
+            "escuela_term":     country_ctx["escuela_term"],
+            "bullying_term":    country_ctx["bullying_term"],
+            "saludo":           country_ctx["saludo"],
         }
 
     # ── Build report context ──────────────────────────────────
