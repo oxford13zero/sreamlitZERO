@@ -1832,6 +1832,9 @@ def main():
     )
     # Add school_country for report_generator
     ctx_report['school_country'] = school_country
+    with st.expander("🔧 Debug: subgrupos_reporte"):
+        st.json(ctx_report.get("subgrupos_reporte", {}))
+        st.json(ctx_report.get("ecologia_reporte", []))
 
     # ── REPORT MODE ───────────────────────────────────────────
     # DEV: uses Haiku, ~200 words per chapter, minimal cost.
