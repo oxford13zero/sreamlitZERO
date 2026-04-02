@@ -321,7 +321,56 @@ por género para este indicador específico.**
 
 [Repetir estructura de 4.1 para curso/grado]
 
-### 4.3 Diferencias por Lengua Indígena
+### 4.3 Resumen Ejecutivo de Grupos de Mayor Riesgo
+
+**INSTRUCCIÓN CRÍTICA:** Esta subsección es OBLIGATORIA. Debe identificar explícitamente, usando 
+los datos de subgrupos del JSON, los grupos con mayor prevalencia de agresión y victimización.
+Si el dato no está disponible en el JSON, escribir "dato no disponible en esta muestra".
+
+**Grado con mayor número de agresores:**
+Identifique el grado escolar (curso) con la prevalencia más alta de perpetración (constructo 
+'perpetracion'). Indique: grado, prevalencia exacta con IC95%, número de estudiantes.
+Formato: "El [grado] concentra la mayor prevalencia de agresores con [pct]% (IC95%: [x]-[y]), 
+representando [n] de [total] estudiantes en ese grado."
+
+**Grado con mayor número de víctimas:**
+Identifique el grado escolar (curso) con la prevalencia más alta de victimización (constructo 
+'victimizacion'). Mismo formato que arriba.
+
+**Género con mayor prevalencia de agresores:**
+Identifique el género con mayor prevalencia de perpetración. Indique si la diferencia es 
+estadísticamente significativa (p < α Bonferroni). 
+Formato: "Los estudiantes de género [X] presentan la mayor prevalencia de agresión con [pct]% 
+(IC95%: [x]-[y]). Esta diferencia [es/no es] estadísticamente significativa (p=[valor])."
+
+**Género con mayor prevalencia de víctimas:**
+Identifique el género con mayor prevalencia de victimización. Mismo formato.
+
+**Género con mayor prevalencia combinada (agresor y víctima simultáneamente):**
+Identifique el género con mayor porcentaje de estudiantes clasificados como agresor-víctima 
+(bully-victim). Si no hay datos de tipología, usar el género con prevalencias elevadas en ambos 
+constructos simultáneamente.
+
+**Edad con mayor prevalencia de agresores:**
+Identifique la edad (de la variable 'edad') con mayor prevalencia de perpetración.
+Formato: "Los estudiantes de [X] años presentan la mayor prevalencia de agresión con [pct]%."
+
+**Edad con mayor prevalencia de víctimas:**
+Identifique la edad con mayor prevalencia de victimización. Mismo formato.
+
+**Tabla resumen de grupos de mayor riesgo:**
+
+| Dimensión | Mayor riesgo de agresión | Mayor riesgo de victimización |
+|-----------|--------------------------|-------------------------------|
+| Grado     | [grado] — [pct]%         | [grado] — [pct]%              |
+| Género    | [género] — [pct]%        | [género] — [pct]%             |
+| Edad      | [edad] años — [pct]%     | [edad] años — [pct]%          |
+
+**Implicación para intervención:**
+Los grupos identificados arriba deben ser los primeros destinatarios de las intervenciones 
+focalizadas descritas en la Sección VII.
+
+### 4.4 Diferencias por Lengua Indígena
 
 [Repetir estructura, pero AGREGAR contexto sensible:]
 
@@ -353,9 +402,9 @@ La escuela tiene la obligación ética y legal (Art. 2° Constitucional) de:
 4. Alianza con familias y comunidades indígenas
 5. Monitoreo mensual de este subgrupo
 
-### 4.4 Diferencias por Orientación Sexual
+### 4.5 Diferencias por Orientación Sexual
 
-[Repetir estructura, contexto sensible similar a 4.3]
+[Repetir estructura, contexto sensible similar a 4.4]
 
 [Si estudiantes LGBTQ+ tienen mayor victimización:]
 
@@ -377,7 +426,7 @@ Patrón consistente con investigación que documenta que estudiantes LGBTQ+ enfr
 4. Grupos de Alianzas Estudiantes (GSA - Gender-Sexuality Alliance)
 5. Recursos de apoyo (orientador capacitado, líneas de ayuda)
 
-### 4.5 Análisis Interseccional
+### 4.6 Análisis Interseccional
 
 [Si hay patrones de doble vulnerabilidad:]
 
