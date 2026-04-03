@@ -242,11 +242,8 @@ def load_survey_data(school_id=None, analysis_dt=None):
             merged['score'] = None
 
         students_df = responses_df[['id', 'school_id']].copy()
-
-
-
         
-demo_map = {
+        demo_map = {
             'zero_general_genero_v2':       'genero',
             'zero_general_edad_v2':         'edad',
             'zero_general_lengua_v2':       'lengua_indigena',
