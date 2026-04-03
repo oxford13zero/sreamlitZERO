@@ -243,12 +243,16 @@ def load_survey_data(school_id=None, analysis_dt=None):
 
         students_df = responses_df[['id', 'school_id']].copy()
 
-        demo_map = {
+
+
+        
+demo_map = {
             'zero_general_genero_v2':       'genero',
             'zero_general_edad_v2':         'edad',
             'zero_general_lengua_v2':       'lengua_indigena',
             'zero_general_tiempo_v2':       'tiempo',
             'zero_general_tipo_escuela_v2': 'tipo_escuela',
+            'zero_general_curso':           'grado',
         }
 
         for ext_id, col_name in demo_map.items():
@@ -271,15 +275,19 @@ def load_survey_data(school_id=None, analysis_dt=None):
             if 'resp_id' in students_df.columns:
                 students_df = students_df.drop(columns=['resp_id'])
 
-        # Map survey_id to grade level
-        survey_grade_map = {
-            '9e26dfc3-8310-4192-a8fc-a02e72078060': 'Secundaria',
-            'a78ed800-8e84-48d5-a350-64e4b60bcd11': 'Primaria',
-            '7298ab4e-e4e6-4d58-a865-4b617f76a0e9': 'Middle',
-            '6cfc1984-b32c-4340-8dfc-c131c3d70049': 'Elementary',
-        }
-        students_df['grado'] = responses_df['survey_id'].map(survey_grade_map).fillna('Sin datos')
+        # Fallback: if grado still missing, use survey_id map (legacy surveys)
+        if 'grado' not in students_df.columns or students_df['grado'].isna().all():
+            survey_grade_map = {
+                '9e26dfc3-8310-4192-a8fc-a02e72078060': 'Secundaria',
+                'a78ed800-8e84-48d5-a350-64e4b60bcd11': 'Primaria',
+                '7298ab4e-e4e6-4d58-a865-4b617f76a0e9': 'Middle',
+                '6cfc1984-b32c-4340-8dfc-c131c3d70049': 'Elementary',
+            }
+            students_df['grado'] = responses_df['survey_id'].map(survey_grade_map).fillna('Sin datos')
+        else:
+            students_df['grado'] = students_df['grado'].fillna('Sin datos')
 
+        
         return responses_df, merged, students_df
 
     except Exception as e:
