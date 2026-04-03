@@ -1429,89 +1429,122 @@ def main():
     has_perp   = 'perpetracion_freq' in filtered_df.columns
     has_vict   = 'victimizacion_freq' in filtered_df.columns
 
+    # Grade groups and their canonical gender lists
+    GRADES_G1 = [
+        '1° Medio', '2° Medio', '3° Medio', '4° Medio',
+        '1° Secundaria', '2° Secundaria', '3° Secundaria',
+        '1° Preparatoria', '2° Preparatoria', '3° Preparatoria',
+        '6th Grade', '7th Grade', '8th Grade',
+        '9th Grade - Freshman', '10th Grade - Sophomore',
+        '11th Grade - Junior', '12th Grade - Senior',
+    ]
+    GRADES_G2 = [
+        '1° Básico', '2° Básico', '3° Básico', '4° Básico',
+        '5° Básico', '6° Básico', '7° Básico', '8° Básico',
+        '1° Primaria', '2° Primaria', '3° Primaria',
+        '4° Primaria', '5° Primaria', '6° Primaria',
+        'Kindergarten', '1st Grade', '2nd Grade', '3rd Grade',
+        '4th Grade', '5th Grade',
+    ]
+    GENDERS_G1 = ['Hombre', 'Mujer', 'Otra identidad de género', 'Prefiero no responder']
+    GENDERS_G2 = ['Niño', 'Niña', 'Prefiero no decir']
+
+    def make_bar_chart(df, freq_col, all_grades, all_genders, y_label):
+        """
+        Build a grouped bar chart with ALL grades and ALL genders always shown.
+        Grades/genders with no data show 0%.
+        """
+        # Build complete grid of grade x gender = 0
+        grid = {grade: {g: 0.0 for g in all_genders} for grade in all_grades}
+
+        if freq_col in df.columns and 'grado' in df.columns and 'genero' in df.columns:
+            for (grade, gender), gdf in df.groupby(['grado', 'genero']):
+                if grade in grid and gender in grid[grade]:
+                    n = len(gdf)
+                    n_true = int(gdf[freq_col].sum())
+                    grid[grade][gender] = round(n_true / n * 100, 1) if n > 0 else 0.0
+
+        # Only include grades that exist in this dataset OR are in all_grades
+        grades_present = [g for g in all_grades if g in df['grado'].values] if 'grado' in df.columns else []
+        if not grades_present:
+            return None
+
+        fig = go.Figure()
+        for gender in all_genders:
+            y_vals = [grid[g][gender] for g in grades_present]
+            fig.add_trace(go.Bar(
+                name=gender,
+                x=grades_present,
+                y=y_vals,
+                text=[f"{v:.1f}%" if v > 0 else "S/D" for v in y_vals],
+                textposition="outside",
+            ))
+        fig.update_layout(
+            barmode="group",
+            xaxis_title="Grado",
+            yaxis_title=y_label,
+            yaxis=dict(range=[0, 110]),
+            legend_title="Género",
+            height=420,
+            margin=dict(l=20, r=20, t=40, b=20),
+        )
+        return fig
+
     if not (has_grade and has_gender):
         st.warning("No hay datos de grado o género disponibles para este análisis.")
     elif not (has_perp or has_vict):
         st.warning("No hay datos de agresión o victimización disponibles.")
     else:
-        def pct_pivot(df, freq_col, row_col, col_col):
-            rows = []
-            for row_val, rdf in df.groupby(row_col):
-                for col_val, cdf in rdf.groupby(col_col):
-                    n = len(cdf)
-                    n_true = int(cdf[freq_col].sum()) if freq_col in cdf.columns else 0
-                    pct = round(n_true / n * 100, 1) if n > 0 else 0.0
-                    rows.append({row_col: row_val, col_col: col_val, "pct": pct, "n": n})
-            if not rows:
-                return None, None
-            detail_df = pd.DataFrame(rows)
-            pivot = detail_df.pivot(index=row_col, columns=col_col, values="pct")
-            return pivot, detail_df
+        # Split filtered_df into two groups by grade
+        df_g1 = filtered_df[filtered_df['grado'].isin(GRADES_G1)].copy() if has_grade else pd.DataFrame()
+        df_g2 = filtered_df[filtered_df['grado'].isin(GRADES_G2)].copy() if has_grade else pd.DataFrame()
 
         tab_agr, tab_vic = st.tabs(["🥊 Agresores por Grado y Género",
                                     "🎯 Víctimas por Grado y Género"])
 
         with tab_agr:
             if has_perp:
-                pivot, detail = pct_pivot(filtered_df, "perpetracion_freq", "grado", "genero")
-                if pivot is not None:
-                    st.caption("Porcentaje de agresores (perpetración frecuente) por grado y género.")
-                    fig = go.Figure()
-                    for genero in pivot.columns:
-                        fig.add_trace(go.Bar(
-                            name=str(genero),
-                            x=list(pivot.index),
-                            y=pivot[genero].values,
-                            text=[f"{v:.1f}%" for v in pivot[genero].values],
-                            textposition="outside",
-                        ))
-                    fig.update_layout(
-                        barmode="group",
-                        xaxis_title="Grado",
-                        yaxis_title="% Agresores",
-                        yaxis=dict(range=[0, 100]),
-                        legend_title="Género",
-                        height=400,
-                        margin=dict(l=20, r=20, t=30, b=20),
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                    with st.expander("Ver tabla detallada"):
-                        st.dataframe(detail.rename(columns={"pct": "% Agresores"}),
-                                     use_container_width=True, hide_index=True)
-                else:
-                    st.warning("Sin datos suficientes.")
+                if not df_g1.empty:
+                    st.subheader("Secundaria / Media / Preparatoria / High School")
+                    fig = make_bar_chart(df_g1, "perpetracion_freq", GRADES_G1, GENDERS_G1, "% Agresores")
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.info("No hay grados de este nivel en los datos actuales.")
+
+                if not df_g2.empty:
+                    st.subheader("Básica / Primaria / Elementary")
+                    fig = make_bar_chart(df_g2, "perpetracion_freq", GRADES_G2, GENDERS_G2, "% Agresores")
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.info("No hay grados de este nivel en los datos actuales.")
+
+                if df_g1.empty and df_g2.empty:
+                    st.warning("Sin datos de grado reconocidos.")
             else:
                 st.warning("No hay datos de perpetración disponibles.")
 
         with tab_vic:
             if has_vict:
-                pivot, detail = pct_pivot(filtered_df, "victimizacion_freq", "grado", "genero")
-                if pivot is not None:
-                    st.caption("Porcentaje de víctimas (victimización frecuente) por grado y género.")
-                    fig = go.Figure()
-                    for genero in pivot.columns:
-                        fig.add_trace(go.Bar(
-                            name=str(genero),
-                            x=list(pivot.index),
-                            y=pivot[genero].values,
-                            text=[f"{v:.1f}%" for v in pivot[genero].values],
-                            textposition="outside",
-                        ))
-                    fig.update_layout(
-                        barmode="group",
-                        xaxis_title="Grado",
-                        yaxis_title="% Víctimas",
-                        yaxis=dict(range=[0, 100]),
-                        legend_title="Género",
-                        height=400,
-                        margin=dict(l=20, r=20, t=30, b=20),
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                    with st.expander("Ver tabla detallada"):
-                        st.dataframe(detail.rename(columns={"pct": "% Víctimas"}),
-                                     use_container_width=True, hide_index=True)
-                else:
-                    st.warning("Sin datos suficientes.")
+                if not df_g1.empty:
+                    st.subheader("Secundaria / Media / Preparatoria / High School")
+                    fig = make_bar_chart(df_g1, "victimizacion_freq", GRADES_G1, GENDERS_G1, "% Víctimas")
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.info("No hay grados de este nivel en los datos actuales.")
+
+                if not df_g2.empty:
+                    st.subheader("Básica / Primaria / Elementary")
+                    fig = make_bar_chart(df_g2, "victimizacion_freq", GRADES_G2, GENDERS_G2, "% Víctimas")
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.info("No hay grados de este nivel en los datos actuales.")
+
+                if df_g1.empty and df_g2.empty:
+                    st.warning("Sin datos de grado reconocidos.")
             else:
                 st.warning("No hay datos de victimización disponibles.")
 
