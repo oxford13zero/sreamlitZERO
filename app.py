@@ -280,7 +280,7 @@ def load_survey_data(school_id=None, analysis_dt=None):
                 '7298ab4e-e4e6-4d58-a865-4b617f76a0e9': 'Middle',
                 '6cfc1984-b32c-4340-8dfc-c131c3d70049': 'Elementary',
             }
-            students_df['grado'] = responses_df['survey_id'].map(survey_grade_map).fillna('Sin datos')
+        students_df['grado'] = responses_df['survey_id'].map(survey_grade_map).fillna('Sin datos')
         else:
             students_df['grado'] = students_df['grado'].fillna('Sin datos')
 
