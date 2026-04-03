@@ -917,6 +917,11 @@ def main():
     # This ensures reliability metrics and item descriptives use complete data.
     students_df = calculate_construct_scores(answers_df, students_df)
 
+    with st.expander("🔧 Debug: students_df grado"):
+        st.write("Grado values:", students_df['grado'].value_counts().to_dict() if 'grado' in students_df.columns else "grado not found")
+        st.write("Total students:", len(students_df))
+    
+
     all_external_ids = answers_df['question_id'].unique().tolist()
     coverage = validate_construct_coverage(all_external_ids)
     substantive_constructs = [c for c in get_all_constructs() if c != 'demographic']
