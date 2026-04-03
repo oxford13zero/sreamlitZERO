@@ -242,7 +242,7 @@ def load_survey_data(school_id=None, analysis_dt=None):
             merged['score'] = None
 
         students_df = responses_df[['id', 'school_id']].copy()
-        
+
         demo_map = {
             'zero_general_genero_v2':       'genero',
             'zero_general_edad_v2':         'edad',
@@ -280,7 +280,7 @@ def load_survey_data(school_id=None, analysis_dt=None):
                 '7298ab4e-e4e6-4d58-a865-4b617f76a0e9': 'Middle',
                 '6cfc1984-b32c-4340-8dfc-c131c3d70049': 'Elementary',
             }
-        students_df['grado'] = responses_df['survey_id'].map(survey_grade_map).fillna('Sin datos')
+            students_df['grado'] = responses_df['survey_id'].map(survey_grade_map).fillna('Sin datos')
         else:
             students_df['grado'] = students_df['grado'].fillna('Sin datos')
 
@@ -1921,7 +1921,6 @@ def main():
         }
 
         # ── Subgrupos para informe: agresión y victimización por grado y género ──
-# ── Subgrupos para informe: agresión y victimización por grado y género ──
         def _prev_by_group(df, freq_col, group_col):
             if freq_col not in df.columns or group_col not in df.columns:
                 return []
@@ -1938,11 +1937,6 @@ def main():
             filtered_df = filtered_df.copy()
             filtered_df['grado'] = filtered_df['tipo_escuela']
 
-        # DEBUG — remove after testing
-        st.write("Columns with grado/escuela/nivel:", [c for c in filtered_df.columns if 'grado' in c or 'escuela' in c or 'nivel' in c])
-        st.write("Grado values:", filtered_df['grado'].value_counts().to_dict() if 'grado' in filtered_df.columns else "grado not found")
-        st.write("All filtered_df columns:", list(filtered_df.columns))
-        
         subgrupos_reporte = {
             "agresion_por_grado":       _prev_by_group(filtered_df, "perpetracion_freq",  "grado"),
             "victimizacion_por_grado":  _prev_by_group(filtered_df, "victimizacion_freq", "grado"),
