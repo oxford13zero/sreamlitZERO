@@ -1412,10 +1412,14 @@ def main():
     # SECTION 4b: AGGRESSORS & VICTIMS BY GRADE × GENDER
     # ════════════════════════════════════════════════════════════
 
+# ════════════════════════════════════════════════════════════
+    # SECTION 4b: AGGRESSORS & VICTIMS BY GRADE × GENDER
+    # ════════════════════════════════════════════════════════════
+
     st.header("📊 4b. Agresores y Víctimas por Grado y Género")
 
-    has_grade  = 'grado'            in filtered_df.columns
-    has_gender = 'genero'           in filtered_df.columns
+    has_grade  = 'grado'             in filtered_df.columns
+    has_gender = 'genero'            in filtered_df.columns
     has_perp   = 'perpetracion_freq' in filtered_df.columns
     has_vict   = 'victimizacion_freq' in filtered_df.columns
 
@@ -1425,7 +1429,6 @@ def main():
         st.warning("No hay datos de agresión o victimización disponibles.")
     else:
         def pct_pivot(df, freq_col, row_col, col_col):
-            """Returns a % pivot table: rows=grado, cols=genero."""
             rows = []
             for row_val, rdf in df.groupby(row_col):
                 for col_val, cdf in rdf.groupby(col_col):
@@ -1447,20 +1450,22 @@ def main():
                 pivot, detail = pct_pivot(filtered_df, "perpetracion_freq", "grado", "genero")
                 if pivot is not None:
                     st.caption("Porcentaje de agresores (perpetración frecuente) por grado y género.")
-                    fig = go.Figure(data=go.Heatmap(
-                        z=pivot.values,
-                        x=list(pivot.columns),
-                        y=list(pivot.index),
-                        colorscale="Reds",
-                        text=[[f"{v:.1f}%" for v in row] for row in pivot.values],
-                        texttemplate="%{text}",
-                        showscale=True,
-                        colorbar=dict(title="% Agresores"),
-                    ))
+                    fig = go.Figure()
+                    for genero in pivot.columns:
+                        fig.add_trace(go.Bar(
+                            name=str(genero),
+                            x=list(pivot.index),
+                            y=pivot[genero].values,
+                            text=[f"{v:.1f}%" for v in pivot[genero].values],
+                            textposition="outside",
+                        ))
                     fig.update_layout(
-                        xaxis_title="Género",
-                        yaxis_title="Grado",
-                        height=max(300, len(pivot.index) * 50 + 100),
+                        barmode="group",
+                        xaxis_title="Grado",
+                        yaxis_title="% Agresores",
+                        yaxis=dict(range=[0, 100]),
+                        legend_title="Género",
+                        height=400,
                         margin=dict(l=20, r=20, t=30, b=20),
                     )
                     st.plotly_chart(fig, use_container_width=True)
@@ -1477,20 +1482,22 @@ def main():
                 pivot, detail = pct_pivot(filtered_df, "victimizacion_freq", "grado", "genero")
                 if pivot is not None:
                     st.caption("Porcentaje de víctimas (victimización frecuente) por grado y género.")
-                    fig = go.Figure(data=go.Heatmap(
-                        z=pivot.values,
-                        x=list(pivot.columns),
-                        y=list(pivot.index),
-                        colorscale="Blues",
-                        text=[[f"{v:.1f}%" for v in row] for row in pivot.values],
-                        texttemplate="%{text}",
-                        showscale=True,
-                        colorbar=dict(title="% Víctimas"),
-                    ))
+                    fig = go.Figure()
+                    for genero in pivot.columns:
+                        fig.add_trace(go.Bar(
+                            name=str(genero),
+                            x=list(pivot.index),
+                            y=pivot[genero].values,
+                            text=[f"{v:.1f}%" for v in pivot[genero].values],
+                            textposition="outside",
+                        ))
                     fig.update_layout(
-                        xaxis_title="Género",
-                        yaxis_title="Grado",
-                        height=max(300, len(pivot.index) * 50 + 100),
+                        barmode="group",
+                        xaxis_title="Grado",
+                        yaxis_title="% Víctimas",
+                        yaxis=dict(range=[0, 100]),
+                        legend_title="Género",
+                        height=400,
                         margin=dict(l=20, r=20, t=30, b=20),
                     )
                     st.plotly_chart(fig, use_container_width=True)
@@ -1547,9 +1554,6 @@ def main():
         st.warning("No hay datos de perpetración disponibles.")
 
     st.markdown("---")
-
-
-
     
     # ════════════════════════════════════════════════════════════
     # SECTION 5: ITEM-LEVEL ANALYSIS
