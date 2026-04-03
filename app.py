@@ -1409,6 +1409,149 @@ def main():
     st.markdown("---")
 
     # ════════════════════════════════════════════════════════════
+    # SECTION 4b: AGGRESSORS & VICTIMS BY GRADE × GENDER
+    # ════════════════════════════════════════════════════════════
+
+    st.header("📊 4b. Agresores y Víctimas por Grado y Género")
+
+    has_grade  = 'grado'            in filtered_df.columns
+    has_gender = 'genero'           in filtered_df.columns
+    has_perp   = 'perpetracion_freq' in filtered_df.columns
+    has_vict   = 'victimizacion_freq' in filtered_df.columns
+
+    if not (has_grade and has_gender):
+        st.warning("No hay datos de grado o género disponibles para este análisis.")
+    elif not (has_perp or has_vict):
+        st.warning("No hay datos de agresión o victimización disponibles.")
+    else:
+        def pct_pivot(df, freq_col, row_col, col_col):
+            """Returns a % pivot table: rows=grado, cols=genero."""
+            rows = []
+            for row_val, rdf in df.groupby(row_col):
+                for col_val, cdf in rdf.groupby(col_col):
+                    n = len(cdf)
+                    n_true = int(cdf[freq_col].sum()) if freq_col in cdf.columns else 0
+                    pct = round(n_true / n * 100, 1) if n > 0 else 0.0
+                    rows.append({row_col: row_val, col_col: col_val, "pct": pct, "n": n})
+            if not rows:
+                return None, None
+            detail_df = pd.DataFrame(rows)
+            pivot = detail_df.pivot(index=row_col, columns=col_col, values="pct")
+            return pivot, detail_df
+
+        tab_agr, tab_vic = st.tabs(["🥊 Agresores por Grado y Género",
+                                    "🎯 Víctimas por Grado y Género"])
+
+        with tab_agr:
+            if has_perp:
+                pivot, detail = pct_pivot(filtered_df, "perpetracion_freq", "grado", "genero")
+                if pivot is not None:
+                    st.caption("Porcentaje de agresores (perpetración frecuente) por grado y género.")
+                    fig = go.Figure(data=go.Heatmap(
+                        z=pivot.values,
+                        x=list(pivot.columns),
+                        y=list(pivot.index),
+                        colorscale="Reds",
+                        text=[[f"{v:.1f}%" for v in row] for row in pivot.values],
+                        texttemplate="%{text}",
+                        showscale=True,
+                        colorbar=dict(title="% Agresores"),
+                    ))
+                    fig.update_layout(
+                        xaxis_title="Género",
+                        yaxis_title="Grado",
+                        height=max(300, len(pivot.index) * 50 + 100),
+                        margin=dict(l=20, r=20, t=30, b=20),
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                    with st.expander("Ver tabla detallada"):
+                        st.dataframe(detail.rename(columns={"pct": "% Agresores"}),
+                                     use_container_width=True, hide_index=True)
+                else:
+                    st.warning("Sin datos suficientes.")
+            else:
+                st.warning("No hay datos de perpetración disponibles.")
+
+        with tab_vic:
+            if has_vict:
+                pivot, detail = pct_pivot(filtered_df, "victimizacion_freq", "grado", "genero")
+                if pivot is not None:
+                    st.caption("Porcentaje de víctimas (victimización frecuente) por grado y género.")
+                    fig = go.Figure(data=go.Heatmap(
+                        z=pivot.values,
+                        x=list(pivot.columns),
+                        y=list(pivot.index),
+                        colorscale="Blues",
+                        text=[[f"{v:.1f}%" for v in row] for row in pivot.values],
+                        texttemplate="%{text}",
+                        showscale=True,
+                        colorbar=dict(title="% Víctimas"),
+                    ))
+                    fig.update_layout(
+                        xaxis_title="Género",
+                        yaxis_title="Grado",
+                        height=max(300, len(pivot.index) * 50 + 100),
+                        margin=dict(l=20, r=20, t=30, b=20),
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                    with st.expander("Ver tabla detallada"):
+                        st.dataframe(detail.rename(columns={"pct": "% Víctimas"}),
+                                     use_container_width=True, hide_index=True)
+                else:
+                    st.warning("Sin datos suficientes.")
+            else:
+                st.warning("No hay datos de victimización disponibles.")
+
+    st.markdown("---")
+
+    # ════════════════════════════════════════════════════════════
+    # SECTION 4c: SCHOOL LOCATIONS WHERE AGGRESSIONS HAPPEN
+    # ════════════════════════════════════════════════════════════
+
+    st.header("🏫 4c. Lugares del Colegio Donde Ocurren las Agresiones")
+    st.info("Analiza los espacios físicos del colegio reportados por los agresores (perpetradores frecuentes).")
+
+    if has_perp and 'victimizacion_freq' in filtered_df.columns:
+        aggressors_df = filtered_df[filtered_df['perpetracion_freq'] == True]
+
+        if len(aggressors_df) >= 5:
+            ecology_items = get_construct_items('ecologia_espacios', all_external_ids_filtered)
+            hotspot_agr = []
+            for item in ecology_items:
+                item_answers = filtered_answers_df[
+                    (filtered_answers_df['question_id'] == item) &
+                    (filtered_answers_df['survey_response_id'].isin(aggressors_df['id']))
+                ]
+                if not item_answers.empty:
+                    scores = item_answers['score'].dropna()
+                    if len(scores) > 0:
+                        q_text = item_answers.iloc[0].get('question_text', item)
+                        hotspot_agr.append({
+                            'lugar':      str(q_text)[:50],
+                            'mean_score': float(scores.mean()),
+                            'pct_high':   float((scores >= 2).mean() * 100),
+                            'n':          int(len(scores)),
+                        })
+
+            if hotspot_agr:
+                hotspot_agr = sorted(hotspot_agr, key=lambda x: x['mean_score'], reverse=True)
+                fig = plot_ecology_hotspots_plotly(hotspot_agr)
+                st.plotly_chart(fig, use_container_width=True)
+                with st.expander("Ver tabla de lugares"):
+                    st.dataframe(pd.DataFrame(hotspot_agr), use_container_width=True, hide_index=True)
+            else:
+                st.warning("No hay datos de ecología para agresores.")
+        else:
+            st.warning(f"Insuficientes agresores para análisis (n={len(aggressors_df)}, mínimo=5)")
+    else:
+        st.warning("No hay datos de perpetración disponibles.")
+
+    st.markdown("---")
+
+
+
+    
+    # ════════════════════════════════════════════════════════════
     # SECTION 5: ITEM-LEVEL ANALYSIS
     # ════════════════════════════════════════════════════════════
 
