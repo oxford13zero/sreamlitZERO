@@ -1412,10 +1412,6 @@ def main():
     # SECTION 4b: AGGRESSORS & VICTIMS BY GRADE × GENDER
     # ════════════════════════════════════════════════════════════
 
-# ════════════════════════════════════════════════════════════
-    # SECTION 4b: AGGRESSORS & VICTIMS BY GRADE × GENDER
-    # ════════════════════════════════════════════════════════════
-
     st.header("📊 4b. Agresores y Víctimas por Grado y Género")
 
     has_grade  = 'grado'             in filtered_df.columns
