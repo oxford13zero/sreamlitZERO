@@ -1094,11 +1094,6 @@ def main():
 
     st.success(f"✅ Datos cargados: {len(filtered_df)} estudiantes en este análisis")
 
-    # TEMP DEBUG
-    st.write("GRADO VALUES:", students_df["grado"].value_counts().to_dict() if "grado" in students_df.columns else "NO GRADO COLUMN")
-    st.write("TOTAL STUDENTS IN students_df:", len(students_df))
-    st.write("TOTAL IN filtered_df:", len(filtered_df))
-
     # ════════════════════════════════════════════════════════════
     # SECTION 1: OVERVIEW (KPIs)
     # ════════════════════════════════════════════════════════════
@@ -1812,118 +1807,85 @@ def main():
     st.markdown("---")
 
     # ════════════════════════════════════════════════════════════
-    # SECTION 10: FULL DIRECTOR REPORT (5 chapters + PDF)
+    # SECTION 10: TWO-DOCUMENT REPORT GENERATION
     # ════════════════════════════════════════════════════════════
 
-    st.header("📝 10. Informe Completo para el Director")
+    st.header("📝 10. Informes para el Director")
     st.markdown(
-        "Genera un informe ejecutivo de 5 capítulos basado en los datos de la encuesta "
-        "y en los manuales del Programa ZERO. El documento puede descargarse como PDF."
+        "Genera **dos documentos PDF** con un solo clic: "
+        "el **Informe de Diagnóstico** (lo que encontramos en tu escuela) "
+        "y el **Plan de Acción** (qué hacer este año escolar), "
+        "ambos adaptados a los datos reales de este establecimiento."
     )
 
     # ── Import report modules ─────────────────────────────────
     from manual_loader import load_category, load_action_plan, get_manual_status
-    from report_generator import generate_full_report, markdown_to_pdf, CHAPTERS
+    from report_generator import (
+        generate_diagnostic_report, generate_action_plan, markdown_to_pdf,
+        DIAGNOSTIC_SECTIONS, ACTION_SECTIONS,
+    )
 
     # ── Manual status panel ───────────────────────────────────
     manual_status = get_manual_status()
-    total_manuals = sum(v for k, v in manual_status.items() if k != 'plan_de_accion')
-    plan_loaded   = manual_status.get('plan_de_accion', 0) == 1
 
     with st.expander("📚 Estado de los manuales cargados"):
-        col_m1, col_m2, col_m3, col_m4, col_m5 = st.columns(5)
-        labels = {
-            'fenomeno':      '🔍 Fenómeno',
-            'enfoque':       '🔗 Enfoque',
-            'intervencion':  '🛡️ Intervención',
-            'prevencion':    '🌱 Prevención',
-            'plan_de_accion':'📋 Plan de Acción',
+        col_m1, col_m2, col_m3, col_m4, col_m5, col_m6 = st.columns(6)
+        manual_labels = {
+            'fenomeno':       '🔍 Fenómeno',
+            'enfoque':        '🔗 Enfoque',
+            'intervencion':   '🛡️ Intervención',
+            'prevencion':     '🌱 Prevención',
+            'plan_de_accion': '📋 Plan de Acción',
+            'ejemplos':       '🏫 Ejemplos',
         }
         for col, (key, label) in zip(
-            [col_m1, col_m2, col_m3, col_m4, col_m5],
-            labels.items()
+            [col_m1, col_m2, col_m3, col_m4, col_m5, col_m6],
+            manual_labels.items()
         ):
             count = manual_status.get(key, 0)
             icon  = "✅" if count > 0 else "⚠️"
-            col.metric(label, f"{icon} {count} archivo{'s' if count != 1 else ''}")
+            col.metric(label, f"{icon} {count}")
 
-        if total_manuals == 0 and not plan_loaded:
+        if sum(manual_status.get(k, 0) for k in ['fenomeno', 'enfoque', 'intervencion', 'prevencion']) == 0:
             st.warning(
-                "⚠️ No se encontraron manuales en /manuales/. "
-                "El informe usará solo los datos de la encuesta."
+                "⚠️ No se encontraron manuales en /Manuales/. "
+                "Los documentos se generarán usando solo los datos de la encuesta."
             )
 
-    # ── Country / language context ────────────────────────────
-    COUNTRY_CONTEXT = {
-        "MX": {
-            "idioma":        "español mexicano",
-            "pais":          "México",
-            "marco":         "Nueva Escuela Mexicana (NEM)",
-            "ley":           "Ley General de Educación y protocolos SEP contra el acoso escolar",
-            "director_title":"Director(a)",
-            "escuela_term":  "plantel",
-            "bullying_term": "acoso escolar",
-            "saludo":        "Estimado(a) Director(a):",
-        },
-        "CL": {
-            "idioma":        "español chileno",
-            "pais":          "Chile",
-            "marco":         "Política de Convivencia Educativa del MINEDUC",
-            "ley":           "Ley de Violencia Escolar (Ley 20.536) y protocolos MINEDUC",
-            "director_title":"Director(a) / Jefe(a) de UTP",
-            "escuela_term":  "establecimiento educacional",
-            "bullying_term": "acoso escolar",
-            "saludo":        "Estimado(a) Director(a):",
-        },
-        "US": {
-            "idioma":        "English",
-            "pais":          "United States",
-            "marco":         "School Safety and Anti-Bullying Policy",
-            "ley":           "applicable federal and state anti-bullying regulations",
-            "director_title":"Principal",
-            "escuela_term":  "school",
-            "bullying_term": "bullying",
-            "saludo":        "Dear Principal,",
-        },
-    }
-    country_ctx = COUNTRY_CONTEXT.get(school_country.upper(), COUNTRY_CONTEXT["MX"])
-
+    # ── Build report context ──────────────────────────────────
     def _build_report_context(
         school_name, filtered_df, prevalence_data,
         substantive_constructs, get_construct_metadata_fn,
-        country_ctx: dict,
+        school_country: str,
     ) -> dict:
         n = len(filtered_df)
 
-        # Prevalence — include n_true, n_total and pct for richer context
         prev_summary = {}
         for construct, prev in prevalence_data.items():
-            meta = get_construct_metadata_fn(construct)
+            meta  = get_construct_metadata_fn(construct)
             label = meta.display_name if meta else construct
             prev_summary[label] = {
-                "pct":       round(prev.pct, 1) if not np.isnan(prev.pct) else None,
+                "pct":         round(prev.pct, 1) if not np.isnan(prev.pct) else None,
                 "n_afectados": int(prev.n_true),
-                "n_total":   int(prev.n_with_data),
-                "categoria": prev.threshold_category,
-                "ci_lower":  round(prev.ci_lower, 1) if not np.isnan(prev.ci_lower) else None,
-                "ci_upper":  round(prev.ci_upper, 1) if not np.isnan(prev.ci_upper) else None,
+                "n_total":     int(prev.n_with_data),
+                "categoria":   prev.threshold_category,
+                "ci_lower":    round(prev.ci_lower, 1) if not np.isnan(prev.ci_lower) else None,
+                "ci_upper":    round(prev.ci_upper, 1) if not np.isnan(prev.ci_upper) else None,
             }
 
         risk_constructs = {k: v for k, v in prev_summary.items() if v["pct"] is not None}
         top3 = sorted(risk_constructs.items(), key=lambda x: x[1]["pct"], reverse=True)[:3]
 
-        # Demographics — include absolute counts too
         demo_summary = {}
         for col, label in [('genero', 'Género'), ('edad', 'Edad'), ('tipo_escuela', 'Nivel escolar')]:
             if col in filtered_df.columns:
-                vc_abs  = filtered_df[col].value_counts()
-                vc_pct  = filtered_df[col].value_counts(normalize=True).round(3)
+                vc_abs = filtered_df[col].value_counts()
+                vc_pct = filtered_df[col].value_counts(normalize=True).round(3)
                 demo_summary[label] = {
                     str(k): {"n": int(vc_abs[k]), "pct": f"{vc_pct[k]*100:.1f}%"}
                     for k in vc_abs.index
                 }
 
-        # Typology — include absolute counts
         typology_summary = {}
         if 'bully_victim_type' in filtered_df.columns:
             vc_abs = filtered_df['bully_victim_type'].value_counts()
@@ -1933,7 +1895,6 @@ def main():
                 for k in vc_abs.index
             }
 
-        # Cyber overlap
         cyber_overlap = None
         if ('victimizacion_freq' in filtered_df.columns and
                 'cybervictimizacion_freq' in filtered_df.columns):
@@ -1949,16 +1910,14 @@ def main():
                 "ambos":                  n_both,   "pct_ambos_de_trad":  pct_both,
             }
 
-        # Risk index
         risk_idx = calculate_risk_index(filtered_df)
         risk_summary = {
-            "indice":              round(risk_idx.ssri, 1) if not np.isnan(risk_idx.ssri) else None,
-            "semaforo":            risk_idx.threshold_color,
-            "componente_riesgo":   round(risk_idx.risk_component, 1) if not np.isnan(risk_idx.risk_component) else None,
-            "componente_protector":round(risk_idx.protective_component, 1) if not np.isnan(risk_idx.protective_component) else None,
+            "indice":               round(risk_idx.ssri, 1) if not np.isnan(risk_idx.ssri) else None,
+            "semaforo":             risk_idx.threshold_color,
+            "componente_riesgo":    round(risk_idx.risk_component, 1) if not np.isnan(risk_idx.risk_component) else None,
+            "componente_protector": round(risk_idx.protective_component, 1) if not np.isnan(risk_idx.protective_component) else None,
         }
 
-        # ── Subgrupos para informe: agresión y victimización por grado y género ──
         def _prev_by_group(df, freq_col, group_col):
             if freq_col not in df.columns or group_col not in df.columns:
                 return []
@@ -1970,7 +1929,6 @@ def main():
                 rows.append({"grupo": str(grp), "pct": pct, "n": n_true, "n_total": n_grp})
             return sorted(rows, key=lambda x: x["pct"], reverse=True)
 
-        # Extract grado from tipo_escuela if not already in filtered_df
         if 'grado' not in filtered_df.columns and 'tipo_escuela' in filtered_df.columns:
             filtered_df = filtered_df.copy()
             filtered_df['grado'] = filtered_df['tipo_escuela']
@@ -1982,16 +1940,13 @@ def main():
             "victimizacion_por_genero": _prev_by_group(filtered_df, "victimizacion_freq", "genero"),
         }
 
-        # ── Ecology hotspots: all spaces sorted highest to lowest ──
         ecologia_reporte = []
         ecologia_cols = [
             c for c in filtered_df.columns
-            if c.startswith('ecologia_')
-            and '_sum' not in c
-            and '_freq' not in c
+            if c.startswith('ecologia_') and '_sum' not in c and '_freq' not in c
         ]
         for col in ecologia_cols:
-            label = col.replace('ecologia_', '').replace('_v2', '').replace('_', ' ').title()
+            label  = col.replace('ecologia_', '').replace('_v2', '').replace('_', ' ').title()
             scores = filtered_df[col].dropna()
             if len(scores) > 0:
                 ecologia_reporte.append({
@@ -2002,128 +1957,155 @@ def main():
                 })
         ecologia_reporte = sorted(ecologia_reporte, key=lambda x: x["puntuacion_media"], reverse=True)
 
-
-        
-
         return {
-            "escuela":          school_name,
-            "n_estudiantes":    n,
-            "prevalencias":     prev_summary,
-            "top3_riesgo":      [{"area": k, "pct": v["pct"], "n": v["n_afectados"],
-                                  "n_total": v["n_total"], "categoria": v["categoria"]}
-                                 for k, v in top3],
-            "demograficos":     demo_summary,
-            "tipologia":        typology_summary,
-            "cyber_overlap":    cyber_overlap,
-            "indice_riesgo":    risk_summary,
+            "escuela":           school_name,
+            "school_country":    school_country,
+            "n_estudiantes":     n,
+            "prevalencias":      prev_summary,
+            "top3_riesgo":       [{"area": k, "pct": v["pct"], "n": v["n_afectados"],
+                                   "n_total": v["n_total"], "categoria": v["categoria"]}
+                                  for k, v in top3],
+            "demograficos":      demo_summary,
+            "tipologia":         typology_summary,
+            "cyber_overlap":     cyber_overlap,
+            "indice_riesgo":     risk_summary,
             "subgrupos_reporte": subgrupos_reporte,
-            "ecologia_reporte": ecologia_reporte,
-            "fecha":            datetime.now().strftime("%d de %B de %Y"),
-            "idioma":           country_ctx["idioma"],
-            "pais":             country_ctx["pais"],
-            "marco":            country_ctx["marco"],
-            "ley":              country_ctx["ley"],
-            "director_title":   country_ctx["director_title"],
-            "escuela_term":     country_ctx["escuela_term"],
-            "bullying_term":    country_ctx["bullying_term"],
-            "saludo":           country_ctx["saludo"],
+            "ecologia_reporte":  ecologia_reporte,
+            "fecha":             datetime.now().strftime("%d de %B de %Y"),
         }
 
-    # ── Build report context ──────────────────────────────────
     ctx_report = _build_report_context(
         school_name, filtered_df, prevalence_data,
         substantive_constructs, get_construct_metadata,
-        country_ctx=country_ctx,
+        school_country=school_country,
     )
-    # Add school_country for report_generator
-    ctx_report['school_country'] = school_country
-    with st.expander("🔧 Debug: subgrupos_reporte"):
-        st.json(ctx_report.get("subgrupos_reporte", {}))
-        st.json(ctx_report.get("ecologia_reporte", []))
 
-    # ── REPORT MODE ───────────────────────────────────────────
-    # DEV: uses Haiku, ~200 words per chapter, minimal cost.
-    # Uncomment PROD block and comment DEV block when going to production.
+    # ── Model selection ───────────────────────────────────────
+    # DEV: Haiku — fast, cheap
+    report_model           = "claude-haiku-4-5"
+    max_tokens_diagnostic  = 1200
+    max_tokens_action      = 1500
+    mode_caption           = "Modo prueba — Haiku · mínimo costo · ~200 palabras por sección"
 
-    # DEV ─────────────────────────────────────────────────────
-    report_model            = "claude-haiku-4-5"   # ~$0.00
-    max_tokens_per_chapter  = 300
-    btn_label               = "🧪 Generar Informe (modo prueba)"
-    mode_caption            = "Modo prueba — Haiku · ~$0.00 · ~200 palabras por capítulo"
-
-    # PROD ────────────────────────────────────────────────────
-    # report_model            = "claude-opus-4-5"   # ~$0.05-0.10 total
-    # max_tokens_per_chapter  = 1000
-    # btn_label               = "📄 Generar Informe Completo"
-    # mode_caption            = "Modo producción — Opus · ~$0.05-0.10 · ~600 palabras por capítulo"
-    # ─────────────────────────────────────────────────────────
+    # PROD: uncomment below and comment DEV block above
+    # report_model           = "claude-sonnet-4-5"
+    # max_tokens_diagnostic  = 1500
+    # max_tokens_action      = 2000
+    # mode_caption           = "Modo producción — Sonnet · ~600 palabras por sección"
 
     st.caption(mode_caption)
-    generate_report = st.button(btn_label, type="primary")
 
-    if generate_report:
+    col_btn1, col_btn2 = st.columns(2)
+    with col_btn1:
+        st.markdown("**📄 Documento 1**")
+        st.caption("Informe de Diagnóstico — qué encontramos en tu escuela")
+    with col_btn2:
+        st.markdown("**📋 Documento 2**")
+        st.caption("Plan de Acción — qué hacer este año escolar")
 
-        # Load manual texts (cached after first load)
+    generate_both = st.button(
+        "🚀 Generar ambos documentos",
+        type="primary",
+        use_container_width=True,
+    )
+
+    if generate_both:
+
         with st.spinner("📖 Cargando manuales..."):
             manual_texts = {
-                "fenomeno":     load_category("fenomeno"),
-                "enfoque":      load_category("enfoque"),
-                "intervencion": load_category("intervencion"),
-                "prevencion":   load_category("prevencion"),
+                "fenomeno":       load_category("fenomeno"),
+                "enfoque":        load_category("enfoque"),
+                "intervencion":   load_category("intervencion"),
+                "prevencion":     load_category("prevencion"),
                 "plan_de_accion": load_action_plan(),
             }
 
-        # Progress tracking
-        progress_bar  = st.progress(0)
-        status_text   = st.empty()
-        chapters_done = []
-
-        def on_chapter_done(chapter_num, chapter_title, text):
-            chapters_done.append(text)
-            progress_bar.progress(chapter_num / len(CHAPTERS))
-            status_text.markdown(
-                f"✅ Capítulo {chapter_num} de {len(CHAPTERS)} completado: "
-                f"*{chapter_title}*"
-            )
-
-        # Generate all 5 chapters
         try:
             client = anthropic.Anthropic(
                 api_key=st.secrets.get("ANTHROPIC_API_KEY", os.getenv("ANTHROPIC_API_KEY", ""))
             )
-            status_text.markdown(f"⏳ Generando Capítulo 1 de {len(CHAPTERS)}...")
-
-            chapters_list, full_document = generate_full_report(
-                ctx=ctx_report,
-                manual_texts=manual_texts,
-                client=client,
-                model=report_model,
-                max_tokens_per_chapter=max_tokens_per_chapter,
-                progress_callback=on_chapter_done,
-            )
-
-            progress_bar.progress(1.0)
-            status_text.markdown("✅ Informe completo generado")
-
-            # Preview
-            st.markdown("---")
-            with st.expander("👁️ Vista previa del informe", expanded=True):
-                st.markdown(full_document)
-            st.markdown("---")
-
-            # PDF download
-            with st.spinner("📄 Generando PDF..."):
-                pdf_bytes = markdown_to_pdf(full_document, school_name)
 
             file_date = datetime.now().strftime("%Y%m%d")
             safe_name = school_name.replace(" ", "_").replace("/", "-")
 
+            # ── DOCUMENT 1 — Diagnostic Report ───────────────
+            st.markdown("---")
+            st.subheader("📄 Documento 1 — Informe de Diagnóstico")
+            d1_progress = st.progress(0)
+            d1_status   = st.empty()
+
+            def on_d1_section(sec_num, total, title, text):
+                d1_progress.progress(sec_num / total)
+                d1_status.markdown(f"✅ Sección {sec_num} de {total}: *{title}*")
+
+            d1_status.markdown(f"⏳ Generando Sección 1 de {len(DIAGNOSTIC_SECTIONS)}...")
+            d1_sections, d1_doc = generate_diagnostic_report(
+                ctx=ctx_report,
+                manual_texts=manual_texts,
+                client=client,
+                model=report_model,
+                max_tokens_per_section=max_tokens_diagnostic,
+                progress_callback=on_d1_section,
+            )
+            d1_progress.progress(1.0)
+            d1_status.markdown("✅ Informe de Diagnóstico completado")
+
+            with st.expander("👁️ Vista previa — Informe de Diagnóstico"):
+                st.markdown(d1_doc)
+
+            with st.spinner("📄 Generando PDF del Diagnóstico..."):
+                d1_pdf = markdown_to_pdf(d1_doc, school_name, "Diagnóstico")
+
             st.download_button(
-                label="📥 Descargar Informe PDF",
-                data=pdf_bytes,
-                file_name=f"informe_TECH4ZERO_{safe_name}_{file_date}.pdf",
+                label="📥 Descargar Informe de Diagnóstico (PDF)",
+                data=d1_pdf,
+                file_name=f"diagnostico_TECH4ZERO_{safe_name}_{file_date}.pdf",
                 mime="application/pdf",
                 type="primary",
+                use_container_width=True,
+            )
+
+            # ── DOCUMENT 2 — Action Plan ──────────────────────
+            st.markdown("---")
+            st.subheader("📋 Documento 2 — Plan de Acción")
+            d2_progress = st.progress(0)
+            d2_status   = st.empty()
+
+            def on_d2_section(sec_num, total, title, text):
+                d2_progress.progress(sec_num / total)
+                d2_status.markdown(f"✅ Sección {sec_num} de {total}: *{title}*")
+
+            d2_status.markdown(f"⏳ Generando Sección 1 de {len(ACTION_SECTIONS)}...")
+            d2_sections, d2_doc = generate_action_plan(
+                ctx=ctx_report,
+                manual_texts=manual_texts,
+                client=client,
+                model=report_model,
+                max_tokens_per_section=max_tokens_action,
+                progress_callback=on_d2_section,
+            )
+            d2_progress.progress(1.0)
+            d2_status.markdown("✅ Plan de Acción completado")
+
+            with st.expander("👁️ Vista previa — Plan de Acción"):
+                st.markdown(d2_doc)
+
+            with st.spinner("📄 Generando PDF del Plan de Acción..."):
+                d2_pdf = markdown_to_pdf(d2_doc, school_name, "Plan de Acción")
+
+            st.download_button(
+                label="📥 Descargar Plan de Acción (PDF)",
+                data=d2_pdf,
+                file_name=f"plan_accion_TECH4ZERO_{safe_name}_{file_date}.pdf",
+                mime="application/pdf",
+                type="primary",
+                use_container_width=True,
+            )
+
+            st.success(
+                "✅ Ambos documentos generados. "
+                "Descarga el Informe de Diagnóstico para compartir con toda la comunidad "
+                "y el Plan de Acción para trabajar con el Equipo Zero Bullying."
             )
 
         except anthropic.AuthenticationError:
@@ -2132,7 +2114,7 @@ def main():
                 "Agrega ANTHROPIC_API_KEY en los secrets de Streamlit Cloud."
             )
         except Exception as e:
-            st.error(f"❌ Error al generar el informe: {e}")
+            st.error(f"❌ Error al generar los documentos: {e}")
             import traceback
             st.code(traceback.format_exc())
 
