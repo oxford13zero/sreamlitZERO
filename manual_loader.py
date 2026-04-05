@@ -1,25 +1,26 @@
 # manual_loader.py
 """
-TECH4ZERO-MX — Manual Loader
-=============================
-Extracts and caches text from the ZERO programme manuals stored in /manuales/.
+TECH4ZERO — Manual Loader v2.0
+================================
+Extracts and caches text from the ZERO programme manuals stored in /Manuales/.
 
 Folder structure expected in the repository root:
-    manuales/
-    ├── fenomeno/        ← 4 PDFs/DOCX about the bullying phenomenon
-    ├── enfoque/         ← 4 PDFs/DOCX about the integrated approach
-    ├── intervencion/    ← 4 PDFs/DOCX about how to intervene
-    ├── prevencion/      ← 4 PDFs/DOCX about prevention
-    └── plan_de_accion_zero.md
+    Manuales/
+    ├── enfoque/          ← 4 PDFs — Manual_Enfoque_Integrado_1-4
+    ├── fenomeno/         ← 4 DOCXs — Manual_Bullying_1-4
+    ├── intervencion/     ← 4 PDFs — Manual_Intervención_1-4
+    ├── prevencion/       ← 4 PDFs — Manual_Prevencion_1-4
+    ├── plan_de_accion/   ← 1 DOCX — guia_plan_accion_final.docx
+    └── Ejemplos/         ← 11 real school action plans (commented out — pending index)
 
-Supports: .pdf, .docx, .txt, .md
+Supports: .pdf, .docx, .doc, .txt, .md
 """
 
 import os
 import re
 import streamlit as st
 
-# ── Keywords that identify action-relevant sections ──────────────────────────
+# ── Keywords that identify action-relevant sections ───────────────────────────
 ACTION_KEYWORDS = [
     # Spanish
     'intervención', 'intervencion', 'acción', 'accion', 'protocolo',
@@ -28,20 +29,23 @@ ACTION_KEYWORDS = [
     'prevención', 'prevencion', 'resolución', 'resolucion',
     'descubrir', 'detectar', 'supervisión', 'supervision',
     'seguimiento', 'respuesta', 'comunidad', 'familia', 'padres',
-    # English (Programme Zero originals may appear)
+    'equipo', 'pilar', 'objetivo', 'acoso', 'bullying', 'víctima',
+    'agresor', 'testigo', 'docente', 'apoderado',
+    # English
     'intervention', 'action', 'protocol', 'recommendation',
     'strategy', 'implement', 'procedure', 'step', 'prevention',
-    'detection', 'follow-up', 'response',
+    'detection', 'follow-up', 'response', 'victim', 'aggressor',
 ]
 
-MAX_CHARS_PER_CATEGORY = 25_000   # ~6,000 tokens — safe for Claude context
-MAX_CHARS_PLAN         = 40_000   # full plan de acción document
+MAX_CHARS_PER_CATEGORY = 25_000   # ~6,000 tokens
+MAX_CHARS_PLAN         = 40_000   # full plan de acción guide
+MAX_CHARS_EXAMPLES     = 15_000   # per example (3 examples max)
 
 
 # ── Text extraction ───────────────────────────────────────────────────────────
 
 def _extract_pdf(path: str) -> str:
-    """Extract text from a PDF using pdfplumber (best for text PDFs)."""
+    """Extract text from a PDF using pdfplumber."""
     try:
         import pdfplumber
         text_parts = []
@@ -79,7 +83,7 @@ def _extract_file(path: str) -> str:
     ext = os.path.splitext(path)[1].lower()
     if ext == '.pdf':
         return _extract_pdf(path)
-    elif ext == '.docx':
+    elif ext in ('.docx', '.doc'):
         return _extract_docx(path)
     elif ext in ('.txt', '.md'):
         return _extract_text_file(path)
@@ -91,8 +95,8 @@ def _extract_file(path: str) -> str:
 
 def _filter_relevant_sections(text: str, max_chars: int) -> str:
     """
-    From a large text, extract paragraphs that contain action keywords.
-    Falls back to the full text (truncated) if no keywords are found.
+    Extract paragraphs containing action keywords.
+    Falls back to full text (truncated) if no keywords are found.
     """
     if not text:
         return ""
@@ -109,31 +113,49 @@ def _filter_relevant_sections(text: str, max_chars: int) -> str:
             if total >= max_chars:
                 break
 
-    # Fallback: no keywords matched → use full text truncated
     if not relevant:
         return text[:max_chars]
 
     return "\n\n".join(relevant)[:max_chars]
 
 
-# ── Public API ────────────────────────────────────────────────────────────────
+# ── Base directory detection ──────────────────────────────────────────────────
 
 def _find_base_dir() -> str:
     """
     Locate the manuals root folder regardless of case (Manuales vs manuales)
     and regardless of the current working directory.
-    Tries common locations used by Streamlit Cloud and local dev.
     """
     candidates = [
-        "manuales", "Manuales",
-        os.path.join(os.path.dirname(__file__), "manuales"),
+        "Manuales",
+        "manuales",
         os.path.join(os.path.dirname(__file__), "Manuales"),
+        os.path.join(os.path.dirname(__file__), "manuales"),
     ]
     for path in candidates:
         if os.path.isdir(path):
             return path
-    return "manuales"  # fallback — will return empty strings gracefully
+    return "Manuales"  # fallback — will return empty strings gracefully
 
+
+def _find_subfolder(base_dir: str, name: str) -> str | None:
+    """
+    Find a subfolder case-insensitively.
+    Returns the full path if found, None otherwise.
+    """
+    try:
+        entries = os.listdir(base_dir)
+    except OSError:
+        return None
+    for entry in entries:
+        if entry.lower() == name.lower():
+            full = os.path.join(base_dir, entry)
+            if os.path.isdir(full):
+                return full
+    return None
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=3600)
 def load_category(category: str, base_dir: str = None) -> str:
@@ -150,8 +172,9 @@ def load_category(category: str, base_dir: str = None) -> str:
     """
     if base_dir is None:
         base_dir = _find_base_dir()
-    folder = os.path.join(base_dir, category)
-    if not os.path.isdir(folder):
+
+    folder = _find_subfolder(base_dir, category)
+    if not folder:
         return ""
 
     all_text_parts = []
@@ -170,13 +193,7 @@ def load_category(category: str, base_dir: str = None) -> str:
 @st.cache_data(ttl=3600)
 def load_action_plan(base_dir: str = None) -> str:
     """
-    Load the Plan de Acción ZERO document or folder.
-
-    Looks in these locations (in order):
-      1. manuales/plan_de_accion_zero.md   (original spec)
-      2. Manuales/plan_de_accion_zero.md
-      3. manuales/plan_de_accion/          (subfolder with any files)
-      4. Manuales/plan_de_accion/          (subfolder, case-insensitive)
+    Load the Plan de Acción guide from Manuales/plan_de_accion/.
 
     Returns:
         Text content up to MAX_CHARS_PLAN chars.
@@ -185,58 +202,117 @@ def load_action_plan(base_dir: str = None) -> str:
     if base_dir is None:
         base_dir = _find_base_dir()
 
-    # Option 1: single .md file
-    md_path = os.path.join(base_dir, "plan_de_accion_zero.md")
-    if os.path.isfile(md_path):
-        return _extract_text_file(md_path)[:MAX_CHARS_PLAN]
+    # Option 1: subfolder plan_de_accion
+    folder = _find_subfolder(base_dir, "plan_de_accion")
+    if folder:
+        parts = []
+        for fname in sorted(os.listdir(folder)):
+            fpath = os.path.join(folder, fname)
+            if os.path.isfile(fpath):
+                raw = _extract_file(fpath)
+                if raw:
+                    parts.append(f"### [{fname}]\n{raw}")
+        combined = "\n\n".join(parts)
+        return combined[:MAX_CHARS_PLAN]
 
-    # Option 2: subfolder named plan_de_accion (or plan_de_accion_zero)
-    for subfolder in ["plan_de_accion", "plan_de_accion_zero"]:
-        folder = os.path.join(base_dir, subfolder)
-        if os.path.isdir(folder):
-            parts = []
-            for fname in sorted(os.listdir(folder)):
-                fpath = os.path.join(folder, fname)
-                if os.path.isfile(fpath):
-                    raw = _extract_file(fpath)
-                    if raw:
-                        parts.append(f"### [{fname}]\n{raw}")
-            combined = "\n\n".join(parts)
-            return combined[:MAX_CHARS_PLAN]
+    # Option 2: single .md file (legacy)
+    for candidate in ["plan_de_accion_zero.md", "plan_de_accion.md"]:
+        md_path = os.path.join(base_dir, candidate)
+        if os.path.isfile(md_path):
+            return _extract_text_file(md_path)[:MAX_CHARS_PLAN]
 
     return ""
 
 
+# ── Ejemplos loader (commented out — pending index creation) ─────────────────
+#
+# @st.cache_data(ttl=3600)
+# def load_examples(base_dir: str = None, max_examples: int = 3) -> str:
+#     """
+#     Load a sample of real school action plan examples from Manuales/Ejemplos/.
+#     Limited to max_examples to control context window size.
+#
+#     Args:
+#         base_dir:     root folder (auto-detected if None)
+#         max_examples: maximum number of examples to load (default 3)
+#
+#     Returns:
+#         Concatenated example text, up to MAX_CHARS_EXAMPLES * max_examples chars.
+#         Returns empty string if folder not found.
+#     """
+#     if base_dir is None:
+#         base_dir = _find_base_dir()
+#
+#     folder = _find_subfolder(base_dir, "Ejemplos")
+#     if not folder:
+#         return ""
+#
+#     files = sorted([
+#         f for f in os.listdir(folder)
+#         if os.path.isfile(os.path.join(folder, f))
+#         and os.path.splitext(f)[1].lower() in ('.pdf', '.docx', '.doc', '.txt', '.md')
+#     ])
+#
+#     # Once an index is created, select best examples based on school profile.
+#     # For now, load the first max_examples files alphabetically.
+#     selected = files[:max_examples]
+#
+#     parts = []
+#     for fname in selected:
+#         fpath = os.path.join(folder, fname)
+#         raw = _extract_file(fpath)
+#         if raw:
+#             filtered = _filter_relevant_sections(raw, MAX_CHARS_EXAMPLES)
+#             parts.append(f"=== EJEMPLO: {fname} ===\n{filtered}")
+#
+#     return "\n\n".join(parts)
+#
+# ─────────────────────────────────────────────────────────────────────────────
+
+
 def get_manual_status(base_dir: str = None) -> dict:
     """
-    Returns a status dict for each category — useful for the UI to show
-    which manuals are loaded and how many files per category.
-    Auto-detects the base directory (handles Manuales vs manuales).
+    Returns a status dict showing how many files are loaded per category.
+    Used by the UI to show which manuals are available.
     """
     if base_dir is None:
         base_dir = _find_base_dir()
 
-    categories = ['fenomeno', 'enfoque', 'intervencion', 'prevencion']
     status = {}
-    for cat in categories:
-        folder = os.path.join(base_dir, cat)
-        if os.path.isdir(folder):
-            files = [f for f in os.listdir(folder)
-                     if os.path.isfile(os.path.join(folder, f))
-                     and os.path.splitext(f)[1].lower() in ('.pdf', '.docx', '.txt', '.md')]
+
+    for cat in ['fenomeno', 'enfoque', 'intervencion', 'prevencion']:
+        folder = _find_subfolder(base_dir, cat)
+        if folder:
+            files = [
+                f for f in os.listdir(folder)
+                if os.path.isfile(os.path.join(folder, f))
+                and os.path.splitext(f)[1].lower() in ('.pdf', '.docx', '.doc', '.txt', '.md')
+            ]
             status[cat] = len(files)
         else:
             status[cat] = 0
 
-    # Check both file and folder variants for plan_de_accion
-    plan_file   = os.path.join(base_dir, "plan_de_accion_zero.md")
-    plan_folder = os.path.join(base_dir, "plan_de_accion")
-    if os.path.isfile(plan_file):
-        status['plan_de_accion'] = 1
-    elif os.path.isdir(plan_folder):
-        files = [f for f in os.listdir(plan_folder)
-                 if os.path.isfile(os.path.join(plan_folder, f))]
+    # plan_de_accion
+    plan_folder = _find_subfolder(base_dir, "plan_de_accion")
+    if plan_folder:
+        files = [
+            f for f in os.listdir(plan_folder)
+            if os.path.isfile(os.path.join(plan_folder, f))
+        ]
         status['plan_de_accion'] = len(files)
     else:
         status['plan_de_accion'] = 0
+
+    # Ejemplos (counted but not loaded yet)
+    ejemplos_folder = _find_subfolder(base_dir, "Ejemplos")
+    if ejemplos_folder:
+        files = [
+            f for f in os.listdir(ejemplos_folder)
+            if os.path.isfile(os.path.join(ejemplos_folder, f))
+            and os.path.splitext(f)[1].lower() in ('.pdf', '.docx', '.doc', '.txt', '.md')
+        ]
+        status['ejemplos'] = len(files)
+    else:
+        status['ejemplos'] = 0
+
     return status
