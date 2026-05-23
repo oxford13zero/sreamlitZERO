@@ -804,6 +804,42 @@ def analyze_reliability(answer_df, construct, external_ids):
         published_alpha_range=metadata.published_alpha_range if metadata else (0.0, 0.0),
         items_excluded=[ext_id for ext_id in external_ids if is_global_screener(ext_id)],
     )
+# ══════════════════════════════════════════════════════════════
+# SEMÁFORO DE PREVALENCIA — UMBRALES BASADOS EN EVIDENCIA
+# ══════════════════════════════════════════════════════════════
+#
+# Modo FREQ (victimización frecuente, ≥2x/mes):
+#   Fuentes: CEP Chile (2024): 11–19% | UCM España (2023): 6.2% |
+#            Meta-análisis global 116 estudios (ScienceDirect 2025): 25%
+#   🟢 < 7%     MONITOREO   — bajo el mínimo documentado (España 6.2%)
+#   🟡 7–15%    ATENCIÓN    — rango medio regional (Chile histórico)
+#   🟠 15–25%   INTERVENCIÓN — sobre promedio regional (Chile 2022: 19%)
+#   🔴 > 25%    CRISIS      — sobre promedio global (meta-análisis: 25%)
+#
+# Modo ANY (cualquier incidencia reportada):
+#   Fuentes: UCM España (2023): 19.2% | WHO/PubMed 5 países LA: 37.8% |
+#            UNESCO/SERCE Latinoamérica: ~51%
+#   🟢 < 20%    MONITOREO   — bajo el mínimo documentado (España 19.2%)
+#   🟡 20–35%   ATENCIÓN    — rango latinoamericano documentado
+#   🟠 35–50%   INTERVENCIÓN — sobre promedio latinoamericano (UNESCO ~51%)
+#   🔴 > 50%    CRISIS      — mayoría de la escuela afectada
+
+THRESHOLDS_FREQ = {
+    'CRISIS':       25.0,   # > 25%
+    'INTERVENCION': 15.0,   # 15–25%
+    'ATENCION':      7.0,   # 7–15%
+    # MONITOREO:   < 7%
+}
+
+THRESHOLDS_ANY = {
+    'CRISIS':       50.0,   # > 50%
+    'INTERVENCION': 35.0,   # 35–50%
+    'ATENCION':     20.0,   # 20–35%
+    # MONITOREO:   < 20%
+}
+
+
+
 
 
 def calculate_prevalence(indicator_series):
@@ -832,11 +868,13 @@ def calculate_prevalence(indicator_series):
     
     ci_lower, ci_upper = wilson_ci(n_true, n_with_data)
     
-    def threshold_flag(pct):
+# DESPUÉS — poner esto:
+    def threshold_flag(pct, mode='freq'):
         if np.isnan(pct): return "SIN_DATOS"
-        if pct >= 20: return "CRISIS"
-        if pct >= 10: return "INTERVENCION"
-        if pct >= 5: return "ATENCION"
+        t = THRESHOLDS_FREQ if mode == 'freq' else THRESHOLDS_ANY
+        if pct > t['CRISIS']:       return "CRISIS"
+        if pct > t['INTERVENCION']: return "INTERVENCION"
+        if pct > t['ATENCION']:     return "ATENCION"
         return "MONITOREO"
     
     return PrevalenceResult(
@@ -847,7 +885,14 @@ def calculate_prevalence(indicator_series):
         missing_pct=round(100 * n_missing / n_total, 1) if n_total > 0 else np.nan,
         ci_lower=ci_lower,
         ci_upper=ci_upper,
+        # ANTES:
         threshold_category=threshold_flag(pct)
+
+# DESPUÉS — detecta automáticamente si la columna es _freq o _any:
+        threshold_category=threshold_flag(
+            pct,
+            mode='any' if str(getattr(indicator_series, 'name', '')).endswith('_any') else 'freq'
+        )
     )
 
 
